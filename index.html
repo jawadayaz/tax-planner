@@ -494,7 +494,7 @@ function renderChecklist() {
   return `
   <div style="display:flex;flex-direction:column;gap:16px">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <select style="border:1px solid #d1d5db;border-radius:7px;padding:5px 10px;font-size:13px;color:#374151;background:#fff"
+      <select id="memberSelect" style="border:1px solid #d1d5db;border-radius:7px;padding:5px 10px;font-size:13px;color:#374151;background:#fff"
         onchange="navigate('checklist',this.value)">${memberSel}</select>
       <h1 style="font-size:20px;font-weight:700;color:#111827;margin:0">${m.label}</h1>
       <span style="color:#9ca3af;font-size:14px">— Tax Year ${yr}</span>
@@ -518,7 +518,6 @@ function renderChecklist() {
           ${items.map(o => {
             const s = getStatus(yr, mid, o.id);
             const d = dueDate(o,yr), ex = extDate(o,yr), od = isOverdue(o,yr,s);
-            const dispStatus = od && s!=='filed' && s!=='na' ? 'overdue' : s;
             return `
             <tr style="${od&&s!=='filed'&&s!=='na'?'background:#fff5f5':''}">
               <td style="width:18px;padding:9px 4px 9px 10px">${jurDot(o.jur)}</td>
@@ -530,7 +529,7 @@ function renderChecklist() {
               <td style="color:#9ca3af;white-space:nowrap">${ex?fmtDate(ex):'—'}</td>
               <td>
                 <select class="status-select" onchange="setStatus(${yr},'${mid}','${o.id}',this.value);render()">
-                  ${STATUS_OPTS.map(x=>`<option value="${x.v}" ${x.v===dispStatus?'selected':''}>${x.label}</option>`).join('')}
+                  ${STATUS_OPTS.map(x=>`<option value="${x.v}" ${x.v===s?'selected':''}>${x.label}</option>`).join('')}
                 </select>
               </td>
               <td style="font-size:12px;color:#9ca3af;max-width:200px">${o.notes||''}</td>
