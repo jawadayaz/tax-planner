@@ -230,8 +230,11 @@ const GIFTS = [
     notes:'Aliza priority $87,351 equalization. Filed Apr 27, 2026.' },
 ];
 
+// ─── GOOGLE CLIENT ID (from centralized ~/Claude/projects/credentials.json) ──
+const GOOGLE_CLIENT_ID = '10038665958-qgeno6r5pcs2p64njv3mcihokj6o9fp4.apps.googleusercontent.com';
+
 // ─── STATE ────────────────────────────────────────────────────────────────────
-let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:[], gClientId:'' };
+let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:[] };
 
 // ─── PERSIST ──────────────────────────────────────────────────────────────────
 function saveStatus() { localStorage.setItem('tp_status', JSON.stringify(S.status)); }
@@ -245,8 +248,7 @@ function loadAll() {
       }
     }
   } catch { YEARS.forEach(yr => { S.status[yr]={}; MEMBERS.forEach(m => { S.status[yr][m.id]={...(SEED_STATUS[yr]?.[m.id]||{})}; }); }); }
-  // share the same key as tax-agent so the user doesn't have to re-enter it
-  S.gClientId = localStorage.getItem('tp_client_id') || localStorage.getItem('google_client_id') || '';
+  // client ID is hardcoded from centralized credentials.json — no user entry needed
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -651,17 +653,9 @@ function renderDrive() {
       <p style="font-size:13px;color:#6b7280;margin:4px 0 0">Scans <code>My Drive/US taxes/${S.year} Taxes/</code> and verifies expected documents.</p>
     </div>
 
-    ${!S.gClientId ? `
-    <div class="card" style="background:#fffbeb;border-color:#fde68a;display:flex;align-items:center;justify-content:space-between">
-      <div>
-        <div style="color:#92400e;font-size:13px;font-weight:600">Google Client ID not configured</div>
-        <div style="color:#a16207;font-size:12px;margin-top:2px">Enter your OAuth Client ID in Settings. Same client ID as tax-agent — it will be auto-loaded if already saved there.</div>
-      </div>
-      <button class="btn btn-primary" onclick="navigate('settings')" style="white-space:nowrap;margin-left:16px">Open Settings →</button>
-    </div>` : !connected ? `
+    ${!connected ? `
     <div class="card" style="text-align:center;padding:48px">
-      <div style="color:#6b7280;margin-bottom:6px;font-size:14px">Connect Google Drive to scan your tax document folders.</div>
-      <div style="color:#9ca3af;margin-bottom:20px;font-size:12px">Client ID: ${S.gClientId.slice(0,20)}…</div>
+      <div style="color:#6b7280;margin-bottom:20px;font-size:14px">Connect Google Drive to scan your tax document folders.</div>
       <button class="btn btn-primary" onclick="connectDrive()">Connect Google Drive</button>
     </div>` : `
     <div class="card" style="background:#f0fdf4;border-color:#bbf7d0;display:flex;justify-content:space-between;align-items:center">
@@ -703,18 +697,13 @@ function renderScanResults() {
 }
 
 function connectDrive() {
-  if (!S.gClientId) {
-    alert('Enter your Google Client ID in Settings first.');
-    navigate('settings');
-    return;
-  }
   if (typeof google === 'undefined' || !google.accounts?.oauth2) {
-    alert('Google Identity Services is still loading. Please wait a moment and try again.');
+    alert('Google Identity Services is still loading — please wait a moment and try again.');
     return;
   }
   try {
     google.accounts.oauth2.initTokenClient({
-      client_id: S.gClientId,
+      client_id: GOOGLE_CLIENT_ID,
       scope: 'https://www.googleapis.com/auth/drive.readonly',
       callback: r => {
         if (r.error) {
@@ -729,7 +718,7 @@ function connectDrive() {
       }
     }).requestAccessToken({ prompt: '' });
   } catch(e) {
-    alert('Could not start auth: ' + e.message + '\n\nCheck that your Google Client ID is correct and that ' + location.origin + ' is an authorised JavaScript origin in Google Cloud Console.');
+    alert('Could not start auth: ' + e.message);
   }
 }
 
@@ -754,14 +743,6 @@ function renderSettings() {
   return `
   <div style="display:flex;flex-direction:column;gap:16px;max-width:640px">
     <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0">Settings</h1>
-
-    <div class="card">
-      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:10px">Google OAuth — Drive Scan</div>
-      <label style="font-size:13px;color:#374151;display:block;margin-bottom:4px">Google Client ID</label>
-      <input type="text" id="cidInput" value="${S.gClientId}" placeholder="xxxx.apps.googleusercontent.com">
-      <p style="font-size:12px;color:#9ca3af;margin:6px 0 10px">Same OAuth client as tax-agent. Stored in localStorage only — never sent anywhere.</p>
-      <button class="btn btn-primary" onclick="saveCid()">Save</button>
-    </div>
 
     <div class="card">
       <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:12px">Family & Entities</div>
@@ -820,12 +801,6 @@ function renderSettings() {
   </div>`;
 }
 
-function saveCid() {
-  S.gClientId = document.getElementById('cidInput').value.trim();
-  localStorage.setItem('tp_client_id', S.gClientId);
-  localStorage.setItem('google_client_id', S.gClientId); // keep in sync with tax-agent
-  alert('Saved.');
-}
 function resetAll() {
   if (!confirm('Reset all filing status overrides?')) return;
   localStorage.removeItem('tp_status');
