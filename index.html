@@ -8,783 +8,686 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="https://apis.google.com/js/api.js" async></script>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-    .nav-tab { @apply px-4 py-2 text-sm font-medium rounded-md transition-colors; }
-    .nav-tab.active { @apply bg-white text-gray-900 shadow-sm; }
-    .nav-tab:not(.active) { @apply text-gray-600 hover:text-gray-900; }
-    .badge { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium; }
-    .badge-us { @apply bg-indigo-100 text-indigo-800; }
-    .badge-india { @apply bg-orange-100 text-orange-800; }
-    .badge-filed { @apply bg-green-100 text-green-800; }
-    .badge-in-progress { @apply bg-amber-100 text-amber-800; }
-    .badge-not-started { @apply bg-gray-100 text-gray-600; }
-    .badge-na { @apply bg-gray-50 text-gray-400; }
-    .badge-overdue { @apply bg-red-100 text-red-800; }
-    .card { @apply bg-white rounded-xl border border-gray-200 p-5; }
-    .member-card { @apply bg-white rounded-xl border-2 cursor-pointer transition-all hover:shadow-md p-4; }
-    .member-card.border-green-400 { border-color: #4ade80; }
-    .member-card.border-amber-400 { border-color: #fbbf24; }
-    .member-card.border-gray-200 { border-color: #e5e7eb; }
-    .member-card.border-blue-300 { border-color: #93c5fd; }
-    select { @apply border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500; }
-    .btn { @apply px-3 py-1.5 rounded-lg text-sm font-medium transition-colors; }
-    .btn-primary { @apply bg-indigo-600 text-white hover:bg-indigo-700; }
-    .btn-ghost { @apply text-gray-600 hover:bg-gray-100; }
-    table { @apply w-full text-sm; }
-    th { @apply text-left text-xs font-medium text-gray-500 uppercase tracking-wide py-2 px-3; }
-    td { @apply py-2.5 px-3 border-b border-gray-50; }
-    tr:hover td { @apply bg-gray-50; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #111827; }
+
+    /* ── Nav ── */
+    .topbar { background:#fff; border-bottom:1px solid #e5e7eb; position:sticky; top:0; z-index:50; }
+    .topbar-inner { max-width:1200px; margin:0 auto; padding:0 24px; display:flex; align-items:stretch; height:52px; gap:0; }
+    .brand { display:flex; align-items:center; gap:10px; font-weight:700; font-size:15px; color:#111827; margin-right:32px; white-space:nowrap; }
+    .brand-sub { font-size:11px; font-weight:400; color:#6b7280; }
+    .nav-tabs { display:flex; align-items:stretch; gap:0; flex:1; }
+    .nav-tab { display:inline-flex; align-items:center; padding:0 16px; font-size:13.5px; font-weight:500; color:#6b7280; border:none; background:none; cursor:pointer; border-bottom:2px solid transparent; transition:color 0.15s, border-color 0.15s; white-space:nowrap; }
+    .nav-tab:hover { color:#111827; }
+    .nav-tab.active { color:#4f46e5; border-bottom-color:#4f46e5; }
+    .year-pill { display:flex; align-items:center; margin-left:auto; }
+    .year-pill select { border:1px solid #d1d5db; border-radius:6px; padding:4px 28px 4px 10px; font-size:13px; font-weight:500; color:#374151; background:#f9fafb; cursor:pointer; appearance:auto; }
+    .year-pill select:focus { outline:2px solid #6366f1; outline-offset:1px; }
+
+    /* ── Cards ── */
+    .card { background:#fff; border-radius:12px; border:1px solid #e5e7eb; padding:20px; }
+    .member-card { background:#fff; border-radius:12px; border:2px solid #e5e7eb; padding:16px; cursor:pointer; transition:box-shadow 0.15s, border-color 0.15s; }
+    .member-card:hover { box-shadow:0 4px 12px rgba(0,0,0,0.08); }
+    .member-card.border-green  { border-color:#4ade80; }
+    .member-card.border-amber  { border-color:#fbbf24; }
+    .member-card.border-red    { border-color:#f87171; }
+    .member-card.border-blue   { border-color:#93c5fd; }
+    .member-card.border-gray   { border-color:#e5e7eb; opacity:0.6; }
+
+    /* ── Badges ── */
+    .badge { display:inline-flex; align-items:center; padding:2px 7px; border-radius:4px; font-size:11.5px; font-weight:600; line-height:1.5; white-space:nowrap; }
+    .badge-us      { background:#e0e7ff; color:#3730a3; }
+    .badge-india   { background:#ffedd5; color:#c2410c; }
+    .badge-filed   { background:#dcfce7; color:#15803d; }
+    .badge-prog    { background:#fef3c7; color:#92400e; }
+    .badge-pending { background:#f3f4f6; color:#6b7280; }
+    .badge-na      { background:#f9fafb; color:#9ca3af; border:1px solid #e5e7eb; }
+    .badge-overdue { background:#fee2e2; color:#991b1b; }
+
+    /* ── Buttons ── */
+    .btn { display:inline-flex; align-items:center; padding:6px 14px; border-radius:7px; font-size:13px; font-weight:500; cursor:pointer; border:none; transition:background 0.15s; }
+    .btn-primary { background:#4f46e5; color:#fff; }
+    .btn-primary:hover { background:#4338ca; }
+    .btn-ghost { background:transparent; color:#6b7280; border:1px solid #e5e7eb; }
+    .btn-ghost:hover { background:#f9fafb; }
+    .btn-danger { background:#dc2626; color:#fff; }
+    .btn-danger:hover { background:#b91c1c; }
+
+    /* ── Table ── */
+    table { width:100%; border-collapse:collapse; font-size:13.5px; }
+    thead th { text-align:left; font-size:11px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:0.05em; padding:6px 10px 8px; border-bottom:1px solid #e5e7eb; }
+    tbody td { padding:9px 10px; border-bottom:1px solid #f3f4f6; vertical-align:middle; font-size:13.5px; color:#374151; }
+    tbody tr:last-child td { border-bottom:none; }
+    tbody tr:hover td { background:#f9fafb; }
+
+    /* ── Status select ── */
+    .status-select { border:1px solid #e5e7eb; border-radius:5px; padding:3px 6px; font-size:12px; color:#374151; background:#f9fafb; cursor:pointer; }
+
+    /* ── Progress bar ── */
+    .progress-track { width:100%; background:#f3f4f6; border-radius:99px; height:4px; margin-top:8px; }
+    .progress-fill  { height:4px; border-radius:99px; }
+
+    /* ── Textarea ── */
+    textarea { width:100%; border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px; font-size:13px; color:#374151; resize:vertical; }
+    textarea:focus { outline:2px solid #6366f1; outline-offset:1px; }
+
+    /* ── Input ── */
+    input[type=text] { width:100%; border:1px solid #d1d5db; border-radius:7px; padding:8px 12px; font-size:13px; color:#374151; }
+    input[type=text]:focus { outline:2px solid #6366f1; outline-offset:1px; }
+
+    /* ── Jurisdiction dot ── */
+    .jur-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; flex-shrink:0; }
+    .jur-us    { background:#6366f1; }
+    .jur-india { background:#f97316; }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
 
 <!-- TOP NAV -->
-<div class="bg-white border-b border-gray-200 sticky top-0 z-50">
-  <div class="max-w-7xl mx-auto px-6">
-    <div class="flex items-center justify-between h-14">
-      <!-- Logo + Year -->
-      <div class="flex items-center gap-4">
-        <span class="font-semibold text-gray-900 text-base">🗂 Family Tax Planner</span>
-        <select id="yearSelect" onchange="setYear(parseInt(this.value))"></select>
-      </div>
-      <!-- Tabs -->
-      <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-        <button class="nav-tab" onclick="navigate('dashboard')">Dashboard</button>
-        <button class="nav-tab" onclick="navigate('checklist')">Checklists</button>
-        <button class="nav-tab" onclick="navigate('registry')">Gift Registry</button>
-        <button class="nav-tab" onclick="navigate('drive')">Drive Scan</button>
-        <button class="nav-tab" onclick="navigate('settings')">Settings</button>
-      </div>
-      <!-- Version -->
-      <span class="text-xs text-gray-400">v1.01</span>
+<nav class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span>🗂</span>
+      <span>Family Tax Planner <span class="brand-sub">v1.01</span></span>
+    </div>
+    <div class="nav-tabs">
+      <button class="nav-tab" onclick="navigate('dashboard')">Dashboard</button>
+      <button class="nav-tab" onclick="navigate('checklist')">Checklists</button>
+      <button class="nav-tab" onclick="navigate('registry')">Gift Registry</button>
+      <button class="nav-tab" onclick="navigate('drive')">Drive Scan</button>
+      <button class="nav-tab" onclick="navigate('settings')">Settings</button>
+    </div>
+    <div class="year-pill">
+      <select id="yearSelect" onchange="setYear(parseInt(this.value))"></select>
     </div>
   </div>
-</div>
+</nav>
 
 <!-- MAIN -->
-<div class="max-w-7xl mx-auto px-6 py-6" id="main"></div>
+<div style="max-width:1200px;margin:0 auto;padding:24px" id="main"></div>
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const APP_VERSION = '1.01';
 const TODAY = new Date('2026-04-28');
-const CURRENT_YEAR = TODAY.getFullYear();   // 2026
+const CURRENT_YEAR = TODAY.getFullYear();
 const YEARS = [2022, 2023, 2024, 2025, 2026];
 
 // ─── FAMILY DATA ──────────────────────────────────────────────────────────────
 const MEMBERS = [
-  { id: 'jawad_chhaya', label: 'Jawad & Chhaya', subtitle: 'Joint US · Separate India', type: 'couple', icon: '👫', active_from: 2012 },
-  { id: 'salar_trust',  label: 'Salar Holdings Trust', subtitle: 'US Trust', type: 'trust', icon: '🏦', active_from: 2012 },
-  { id: 'mariam_trust', label: 'Mariam Ayaz Trust', subtitle: 'US Trust · India Income', type: 'trust', icon: '🏦', active_from: 2027 },
-  { id: 'sakina',       label: 'Sakina Ayaz', subtitle: 'US · India Resident', type: 'individual', icon: '👩', active_from: 2027 },
-  { id: 'aliza',        label: 'Aliza Ayaz', subtitle: 'US · India NRI', type: 'individual', icon: '👩', active_from: 2027 },
+  { id:'jawad_chhaya', label:'Jawad & Chhaya',        subtitle:'Joint US · Separate India', type:'couple',     icon:'👫', active_from:2012 },
+  { id:'salar_trust',  label:'Salar Holdings Trust',  subtitle:'US Trust',                  type:'trust',      icon:'🏦', active_from:2012 },
+  { id:'mariam_trust', label:'Mariam Ayaz Trust',     subtitle:'US Trust · India Income',   type:'trust',      icon:'🏦', active_from:2027 },
+  { id:'sakina',       label:'Sakina Ayaz',            subtitle:'US · India (from 2027)',    type:'individual', icon:'👩', active_from:2022 },
+  { id:'aliza',        label:'Aliza Ayaz',             subtitle:'US · India NRI (from 2027)',type:'individual', icon:'👩', active_from:2022 },
 ];
 
-// Obligations: each entry has id, label, jurisdiction ('US'|'India'), category,
-// due_year_offset (years after tax year), due_month, due_day,
-// optional: ext_month, ext_day, conditional, active_from, notes
+// duo = year offset for due date (0 = within tax year, 1 = following year)
+// active_from on individual obligations overrides member-level for India obligations
 const OBLIGATIONS = {
   jawad_chhaya: [
-    // US Returns
-    { id:'us_1040',        label:'Form 1040 (Joint)',       jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, notes:'Incl. Schedule B, D, E; Form 1116 (FTC for India income)' },
-    { id:'us_fbar',        label:'FinCEN 114 (FBAR)',       jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, notes:'Auto-extended to Oct 15. Via BSA e-filing system.' },
-    { id:'us_709',         label:'Form 709 (Gift Tax)',     jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, cond:true, notes:'Required if gifts to any person exceed annual exclusion ($19k in 2026).' },
-    { id:'us_8938',        label:'Form 8938 (FATCA)',       jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, cond:true, notes:'Required if foreign financial assets exceed thresholds.' },
-    { id:'us_3520',        label:'Form 3520',               jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, cond:true, notes:'Required if received gifts from foreign persons > $100k.' },
-    // India Returns (India FY is Apr–Mar; ITR due Jul 31 of following calendar year)
-    { id:'in_itr_jawad',   label:'ITR-2 — Jawad',          jurisdiction:'India', cat:'returns',  duo:1, dm:7,  dd:31, em:10, ed:31, notes:'India FY Apr–Mar. Includes US income reported for FTC credit.' },
-    { id:'in_itr_chhaya',  label:'ITR-2 — Chhaya',         jurisdiction:'India', cat:'returns',  duo:1, dm:7,  dd:31, em:10, ed:31, notes:'India FY Apr–Mar. Includes US income reported for FTC credit.' },
-    // India Advance Tax (within the India tax year = same calendar year as US tax year)
-    { id:'in_adv_q1',      label:'Advance Tax Q1 (15%)',    jurisdiction:'India', cat:'payments', duo:0, dm:6,  dd:15, notes:'Jun 15. 15% of annual India tax estimate.' },
-    { id:'in_adv_q2',      label:'Advance Tax Q2 (45%)',    jurisdiction:'India', cat:'payments', duo:0, dm:9,  dd:15, notes:'Sep 15. Cumulative 45% of annual estimate.' },
-    { id:'in_adv_q3',      label:'Advance Tax Q3 (75%)',    jurisdiction:'India', cat:'payments', duo:0, dm:12, dd:15, notes:'Dec 15. Cumulative 75% of annual estimate.' },
-    { id:'in_adv_q4',      label:'Advance Tax Q4 (100%)',   jurisdiction:'India', cat:'payments', duo:1, dm:3,  dd:15, notes:'Mar 15 of following year. Balance to 100%.' },
+    { id:'us_1040',       label:'Form 1040 (Joint)',     jur:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, notes:'Incl. Sch B, D, E; Form 1116 (FTC for India income)' },
+    { id:'us_fbar',       label:'FinCEN 114 (FBAR)',     jur:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, notes:'Auto-extended to Oct 15. Filed via BSA e-filing.' },
+    { id:'us_709',        label:'Form 709 (Gift Tax)',   jur:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, cond:true, notes:'Required if gifts to any person exceed annual exclusion.' },
+    { id:'us_8938',       label:'Form 8938 (FATCA)',     jur:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, cond:true, notes:'Required if foreign financial assets exceed thresholds.' },
+    { id:'us_3520',       label:'Form 3520',             jur:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, cond:true, notes:'Required if received gifts from foreign persons > $100k.' },
+    { id:'in_itr_jawad',  label:'ITR-2 — Jawad',         jur:'India', cat:'returns',  duo:1, dm:7,  dd:31, em:10, ed:31, notes:'India FY Apr–Mar. US income also reported; FTC claimed.' },
+    { id:'in_itr_chhaya', label:'ITR-2 — Chhaya',        jur:'India', cat:'returns',  duo:1, dm:7,  dd:31, em:10, ed:31, notes:'India FY Apr–Mar. US income also reported; FTC claimed.' },
+    { id:'in_adv_q1',     label:'Advance Tax Q1 (15%)',  jur:'India', cat:'payments', duo:0, dm:6,  dd:15, notes:'15% of annual India tax estimate.' },
+    { id:'in_adv_q2',     label:'Advance Tax Q2 (45%)',  jur:'India', cat:'payments', duo:0, dm:9,  dd:15, notes:'Cumulative 45%.' },
+    { id:'in_adv_q3',     label:'Advance Tax Q3 (75%)',  jur:'India', cat:'payments', duo:0, dm:12, dd:15, notes:'Cumulative 75%.' },
+    { id:'in_adv_q4',     label:'Advance Tax Q4 (100%)', jur:'India', cat:'payments', duo:1, dm:3,  dd:15, notes:'Balance to 100%. Due Mar 15 of following year.' },
   ],
   salar_trust: [
-    { id:'us_1041_salar',  label:'Form 1041 (Trust Return)',jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:9,  ed:30, notes:'Nil return — all income distributed via K-1 to beneficiaries.' },
-    { id:'k1_chhaya_s',    label:'K-1 → Chhaya (50%)',     jurisdiction:'US',    cat:'k1s',      duo:1, dm:4,  dd:15, notes:'Distributed with 1041.' },
-    { id:'k1_sakina_s',    label:'K-1 → Sakina (25%)',     jurisdiction:'US',    cat:'k1s',      duo:1, dm:4,  dd:15, active_from:2027 },
-    { id:'k1_aliza_s',     label:'K-1 → Aliza (25%)',      jurisdiction:'US',    cat:'k1s',      duo:1, dm:4,  dd:15, active_from:2027 },
+    { id:'us_1041_salar', label:'Form 1041 (Trust Return)', jur:'US', cat:'returns', duo:1, dm:4, dd:15, em:9, ed:30, notes:'Nil — all income distributed via K-1.' },
+    { id:'k1_chhaya_s',   label:'K-1 → Chhaya (50%)',      jur:'US', cat:'k1s',     duo:1, dm:4, dd:15 },
+    { id:'k1_sakina_s',   label:'K-1 → Sakina (25%)',      jur:'US', cat:'k1s',     duo:1, dm:4, dd:15 },
+    { id:'k1_aliza_s',    label:'K-1 → Aliza (25%)',       jur:'US', cat:'k1s',     duo:1, dm:4, dd:15 },
   ],
   mariam_trust: [
-    { id:'us_1041_mariam', label:'Form 1041 (Trust) — US', jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:9,  ed:30, active_from:2027, notes:'Nil — all income distributed.' },
-    { id:'in_trust_mariam',label:'India Trust Return',      jurisdiction:'India', cat:'returns',  duo:1, dm:7,  dd:31, active_from:2027, notes:'Nil — income distributed on K-1; beneficiaries pay India tax.' },
-    { id:'k1_jawad_m',     label:'K-1 → Jawad (50%)',      jurisdiction:'US',    cat:'k1s',      duo:1, dm:4,  dd:15, active_from:2027 },
-    { id:'k1_chhaya_m',    label:'K-1 → Chhaya (25%)',     jurisdiction:'US',    cat:'k1s',      duo:1, dm:4,  dd:15, active_from:2027 },
-    { id:'k1_sakina_m',    label:'K-1 → Sakina (12.5%)',   jurisdiction:'US',    cat:'k1s',      duo:1, dm:4,  dd:15, active_from:2027 },
-    { id:'k1_aliza_m',     label:'K-1 → Aliza (12.5%)',    jurisdiction:'US',    cat:'k1s',      duo:1, dm:4,  dd:15, active_from:2027 },
+    { id:'us_1041_mariam',  label:'Form 1041 — US',         jur:'US',    cat:'returns', duo:1, dm:4, dd:15, em:9, ed:30, notes:'Nil — all distributed.' },
+    { id:'in_trust_mariam', label:'India Trust Return',     jur:'India', cat:'returns', duo:1, dm:7, dd:31, notes:'Nil — distributed on K-1.' },
+    { id:'k1_jawad_m',      label:'K-1 → Jawad (50%)',      jur:'US',    cat:'k1s',     duo:1, dm:4, dd:15 },
+    { id:'k1_chhaya_m',     label:'K-1 → Chhaya (25%)',     jur:'US',    cat:'k1s',     duo:1, dm:4, dd:15 },
+    { id:'k1_sakina_m',     label:'K-1 → Sakina (12.5%)',   jur:'US',    cat:'k1s',     duo:1, dm:4, dd:15 },
+    { id:'k1_aliza_m',      label:'K-1 → Aliza (12.5%)',    jur:'US',    cat:'k1s',     duo:1, dm:4, dd:15 },
   ],
+  // Sakina: US taxes already; India ITR only from 2027 (Mariam Trust distributions)
   sakina: [
-    { id:'in_itr_sakina',  label:'ITR-2 (India Resident)', jurisdiction:'India', cat:'returns',  duo:1, dm:7,  dd:31, active_from:2027 },
-    { id:'us_1040_sakina', label:'Form 1040',               jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, active_from:2027, notes:'Incl. Salar K-1, Mariam K-1 (India income + FTC).' },
-    { id:'us_fbar_sakina', label:'FinCEN 114 (FBAR)',       jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, cond:true, active_from:2027, notes:'If India accounts > $10k.' },
+    { id:'us_1040_sakina',  label:'Form 1040',           jur:'US',    cat:'returns', duo:1, dm:4, dd:15, em:10, ed:15, notes:'US investment income + Salar K-1. India K-1 + FTC from 2027.' },
+    { id:'us_fbar_sakina',  label:'FinCEN 114 (FBAR)',   jur:'US',    cat:'returns', duo:1, dm:4, dd:15, em:10, ed:15, cond:true, notes:'If India accounts > $10k.' },
+    { id:'in_itr_sakina',   label:'ITR-2 (India Resident)', jur:'India', cat:'returns', duo:1, dm:7, dd:31, active_from:2027, notes:'When Mariam Trust India distributions begin.' },
   ],
+  // Aliza: US taxes already (incl. earned income); India NRI ITR only from 2027
   aliza: [
-    { id:'in_itr_aliza',   label:'ITR-2 (India NRI)',       jurisdiction:'India', cat:'returns',  duo:1, dm:7,  dd:31, active_from:2027 },
-    { id:'us_1040_aliza',  label:'Form 1040',               jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, active_from:2027, notes:'Incl. earned income, Salar K-1, Mariam K-1 (India income + FTC).' },
-    { id:'us_fbar_aliza',  label:'FinCEN 114 (FBAR)',       jurisdiction:'US',    cat:'returns',  duo:1, dm:4,  dd:15, em:10, ed:15, cond:true, active_from:2027, notes:'If India accounts > $10k.' },
+    { id:'us_1040_aliza',   label:'Form 1040',           jur:'US',    cat:'returns', duo:1, dm:4, dd:15, em:10, ed:15, notes:'US earned income + investment + Salar K-1. India K-1 + FTC from 2027.' },
+    { id:'us_fbar_aliza',   label:'FinCEN 114 (FBAR)',   jur:'US',    cat:'returns', duo:1, dm:4, dd:15, em:10, ed:15, cond:true, notes:'If India accounts > $10k.' },
+    { id:'in_itr_aliza',    label:'ITR-2 (India NRI)',   jur:'India', cat:'returns', duo:1, dm:7, dd:31, active_from:2027, notes:'When Mariam Trust India distributions begin.' },
   ],
 };
 
-// Pre-seeded known filing status
-// Structure: { [year]: { [memberId]: { [obligationId]: status } } }
-// Statuses: 'filed' | 'in_progress' | 'not_started' | 'na' | 'overdue'
 const SEED_STATUS = {
   2022: {
     jawad_chhaya: { us_1040:'filed', us_fbar:'filed', us_709:'filed', us_8938:'na', us_3520:'na',
                     in_itr_jawad:'filed', in_itr_chhaya:'filed',
                     in_adv_q1:'filed', in_adv_q2:'filed', in_adv_q3:'filed', in_adv_q4:'filed' },
-    salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed' },
+    salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed', k1_sakina_s:'na', k1_aliza_s:'na' },
+    sakina:       { us_1040_sakina:'filed', us_fbar_sakina:'na' },
+    aliza:        { us_1040_aliza:'filed',  us_fbar_aliza:'na'  },
   },
   2023: {
     jawad_chhaya: { us_1040:'filed', us_fbar:'filed', us_709:'filed', us_8938:'na', us_3520:'na',
                     in_itr_jawad:'filed', in_itr_chhaya:'filed',
                     in_adv_q1:'filed', in_adv_q2:'filed', in_adv_q3:'filed', in_adv_q4:'filed' },
-    salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed' },
+    salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed', k1_sakina_s:'na', k1_aliza_s:'na' },
+    sakina:       { us_1040_sakina:'filed', us_fbar_sakina:'na' },
+    aliza:        { us_1040_aliza:'filed',  us_fbar_aliza:'na'  },
   },
   2024: {
     jawad_chhaya: { us_1040:'filed', us_fbar:'filed', us_709:'na', us_8938:'na', us_3520:'na',
                     in_itr_jawad:'filed', in_itr_chhaya:'filed',
                     in_adv_q1:'filed', in_adv_q2:'filed', in_adv_q3:'filed', in_adv_q4:'filed' },
-    salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed' },
+    salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed', k1_sakina_s:'na', k1_aliza_s:'na' },
+    sakina:       { us_1040_sakina:'filed', us_fbar_sakina:'na' },
+    aliza:        { us_1040_aliza:'filed',  us_fbar_aliza:'na'  },
   },
   2025: {
     jawad_chhaya: { us_1040:'in_progress', us_fbar:'in_progress', us_709:'na', us_8938:'na', us_3520:'na',
                     in_itr_jawad:'not_started', in_itr_chhaya:'not_started',
                     in_adv_q1:'filed', in_adv_q2:'filed', in_adv_q3:'filed', in_adv_q4:'filed' },
-    salar_trust:  { us_1041_salar:'in_progress', k1_chhaya_s:'in_progress' },
+    salar_trust:  { us_1041_salar:'in_progress', k1_chhaya_s:'in_progress', k1_sakina_s:'in_progress', k1_aliza_s:'in_progress' },
+    sakina:       { us_1040_sakina:'not_started', us_fbar_sakina:'na' },
+    aliza:        { us_1040_aliza:'not_started',  us_fbar_aliza:'na'  },
   },
   2026: {
     jawad_chhaya: { us_1040:'not_started', us_fbar:'not_started', us_709:'filed', us_8938:'na', us_3520:'na',
                     in_itr_jawad:'not_started', in_itr_chhaya:'not_started',
                     in_adv_q1:'not_started', in_adv_q2:'not_started', in_adv_q3:'not_started', in_adv_q4:'not_started' },
-    salar_trust:  { us_1041_salar:'not_started', k1_chhaya_s:'not_started' },
+    salar_trust:  { us_1041_salar:'not_started', k1_chhaya_s:'not_started', k1_sakina_s:'not_started', k1_aliza_s:'not_started' },
+    sakina:       { us_1040_sakina:'not_started', us_fbar_sakina:'na' },
+    aliza:        { us_1040_aliza:'not_started',  us_fbar_aliza:'na'  },
   },
 };
 
 // ─── GIFT REGISTRY ────────────────────────────────────────────────────────────
 const GIFTS = [
-  { year:2012, donors:['Jawad Ayaz','Chhaya Ayaz'], split:true,
-    donee:'(per Schedule B — details in 2012 Taxes/Gift Tax/)',
-    asset:'Cash', total_fmv:null,
-    excl_per_donor:13000, n_donees:1,
-    jawad_taxable:400325, chhaya_taxable:400325,
-    jawad_credit_used:121910, chhaya_credit_used:121910,
-    filed:true, notes:'2012 is the base year for Schedule B cumulative totals.' },
-  { year:2022, donors:['Jawad Ayaz','Chhaya Ayaz'], split:true,
-    donee:'Sakina Ayaz', asset:'AAPL shares',
-    total_fmv:245050, excl_per_donor:16000, n_donees:1,
-    jawad_taxable:106525, chhaya_taxable:106525,
-    jawad_credit_used:36424, chhaya_credit_used:36424,
-    filed:true, notes:'Gift split. File: 2022 Taxes/Jawad.& Chhaya/' },
-  { year:2023, donors:['Jawad Ayaz','Chhaya Ayaz'], split:true,
-    donee:'Aliza Ayaz', asset:'AMD shares',
-    total_fmv:117000, excl_per_donor:17000, n_donees:1,
-    jawad_taxable:41500, chhaya_taxable:41500,
-    jawad_credit_used:15355, chhaya_credit_used:15355,
-    filed:true, notes:'Gift split. File: 2023 Taxes/Jawad & Chhaya/' },
-  { year:2026, donors:['Jawad Ayaz','Chhaya Ayaz'], split:true,
-    donee:'Salar Holdings Trust FBO Sakina ($2,218,325) & FBO Aliza ($2,305,675)',
-    asset:'13,000 AMD shares @ $348/sh',
-    total_fmv:4524000, excl_per_donor:38000, n_donees:2,
-    jawad_taxable:2224001, chhaya_taxable:2223999,
-    jawad_credit_used:881050, chhaya_credit_used:881050,
-    filed:true, notes:'Aliza priority $87,351 equalization. Forms filed Apr 27, 2026. File: 2026 Taxes/Jawad & Chhaya/' },
+  { year:2012, donors:'Jawad & Chhaya', split:true, donee:'(see 2012 Taxes/Gift Tax/ folder)',
+    asset:'Cash', total_fmv:null, excl_per:13000, n_donees:1,
+    jawad_tax:400325, chhaya_tax:400325, jawad_cr:121910, chhaya_cr:121910, filed:true,
+    notes:'Base year for Schedule B cumulative totals.' },
+  { year:2022, donors:'Jawad & Chhaya', split:true, donee:'Sakina Ayaz',
+    asset:'AAPL shares', total_fmv:245050, excl_per:16000, n_donees:1,
+    jawad_tax:106525, chhaya_tax:106525, jawad_cr:36424, chhaya_cr:36424, filed:true,
+    notes:'2022 Taxes/Jawad.& Chhaya/' },
+  { year:2023, donors:'Jawad & Chhaya', split:true, donee:'Aliza Ayaz',
+    asset:'AMD shares', total_fmv:117000, excl_per:17000, n_donees:1,
+    jawad_tax:41500, chhaya_tax:41500, jawad_cr:15355, chhaya_cr:15355, filed:true,
+    notes:'2023 Taxes/Jawad & Chhaya/' },
+  { year:2026, donors:'Jawad & Chhaya', split:true,
+    donee:'Salar Trust FBO Sakina ($2,218,325) & FBO Aliza ($2,305,675)',
+    asset:'13,000 AMD @ $348/sh', total_fmv:4524000, excl_per:38000, n_donees:2,
+    jawad_tax:2224001, chhaya_tax:2223999, jawad_cr:881050, chhaya_cr:881050, filed:true,
+    notes:'Aliza priority $87,351 equalization. Filed Apr 27, 2026.' },
 ];
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-let state = {
-  year: 2025,          // default to "current filing year" (tax year 2025, returns due 2026)
-  view: 'dashboard',
-  member: 'jawad_chhaya',
-  status: {},          // overrides loaded from localStorage
-  driveToken: null,
-  driveFiles: [],
-  gClientId: '',
-};
+let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:[], gClientId:'' };
 
-// ─── PERSISTENCE ──────────────────────────────────────────────────────────────
-function saveStatus() {
-  localStorage.setItem('tax_status', JSON.stringify(state.status));
-}
-function loadStatus() {
+// ─── PERSIST ──────────────────────────────────────────────────────────────────
+function saveStatus() { localStorage.setItem('tp_status', JSON.stringify(S.status)); }
+function loadAll() {
   try {
-    const saved = JSON.parse(localStorage.getItem('tax_status') || '{}');
-    // Merge seed with user overrides (user override wins)
+    const saved = JSON.parse(localStorage.getItem('tp_status') || '{}');
     for (const yr of YEARS) {
-      state.status[yr] = state.status[yr] || {};
-      for (const mid of MEMBERS.map(m=>m.id)) {
-        state.status[yr][mid] = Object.assign({},
-          SEED_STATUS[yr]?.[mid] || {},
-          saved[yr]?.[mid] || {}
-        );
+      S.status[yr] = {};
+      for (const m of MEMBERS) {
+        S.status[yr][m.id] = Object.assign({}, SEED_STATUS[yr]?.[m.id] || {}, saved[yr]?.[m.id] || {});
       }
     }
-  } catch { buildSeedStatus(); }
-}
-function buildSeedStatus() {
-  for (const yr of YEARS) {
-    state.status[yr] = {};
-    for (const mid of MEMBERS.map(m=>m.id)) {
-      state.status[yr][mid] = { ...(SEED_STATUS[yr]?.[mid] || {}) };
-    }
-  }
-}
-function loadSettings() {
-  state.gClientId = localStorage.getItem('google_client_id') || '';
+  } catch { YEARS.forEach(yr => { S.status[yr]={}; MEMBERS.forEach(m => { S.status[yr][m.id]={...(SEED_STATUS[yr]?.[m.id]||{})}; }); }); }
+  S.gClientId = localStorage.getItem('tp_client_id') || '';
 }
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
-function fmt(n) {
-  if (n == null) return '—';
-  return '$' + Number(n).toLocaleString();
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+const fmt = n => n == null ? '—' : '$' + Number(n).toLocaleString();
+const fmtDate = d => d ? d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+const memberById = id => MEMBERS.find(m => m.id === id);
+
+function getObls(mid, yr) {
+  return (OBLIGATIONS[mid] || []).filter(o => !(o.active_from && yr < o.active_from));
 }
-function getStatus(year, memberId, oblId) {
-  return state.status[year]?.[memberId]?.[oblId] || 'not_started';
+function getStatus(yr, mid, oid) { return S.status[yr]?.[mid]?.[oid] || 'not_started'; }
+function setStatus(yr, mid, oid, val) {
+  if (!S.status[yr]) S.status[yr]={};
+  if (!S.status[yr][mid]) S.status[yr][mid]={};
+  S.status[yr][mid][oid] = val; saveStatus();
 }
-function setStatus(year, memberId, oblId, val) {
-  if (!state.status[year]) state.status[year] = {};
-  if (!state.status[year][memberId]) state.status[year][memberId] = {};
-  state.status[year][memberId][oblId] = val;
-  saveStatus();
-}
-function getObligations(memberId, year) {
-  return (OBLIGATIONS[memberId] || []).filter(o => {
-    if (o.active_from && year < o.active_from) return false;
-    return true;
-  });
-}
-function dueDate(obl, year) {
-  // duo = year offset from tax year (0=same year, 1=following year)
-  const y = year + (obl.duo || 0);
-  return new Date(y, obl.dm - 1, obl.dd);
-}
-function extDate(obl, year) {
-  if (!obl.em) return null;
-  const y = year + (obl.duo || 0);
-  return new Date(y, obl.em - 1, obl.ed);
-}
-function isOverdue(obl, year, status) {
-  if (status === 'filed' || status === 'na') return false;
-  const d = dueDate(obl, year);
-  return d < TODAY;
-}
-function fmtDate(d) {
-  if (!d) return '';
-  return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-}
-function memberForId(id) { return MEMBERS.find(m => m.id === id); }
-function obligationProgress(year, memberId) {
-  const obls = getObligations(memberId, year);
-  if (!obls.length) return { total:0, filed:0, overdue:0, na:0, pct:100 };
+function dueDate(o, yr) { return new Date(yr + (o.duo||0), o.dm-1, o.dd); }
+function extDate(o, yr) { return o.em ? new Date(yr + (o.duo||0), o.em-1, o.ed) : null; }
+function isOverdue(o, yr, st) { return st!=='filed' && st!=='na' && dueDate(o,yr) < TODAY; }
+
+function progress(yr, mid) {
+  const obls = getObls(mid, yr);
+  if (!obls.length) return {total:0, filed:0, overdue:0, na:0, active:0, pct:100};
   let filed=0, overdue=0, na=0;
-  for (const o of obls) {
-    const s = getStatus(year, memberId, o.id);
-    if (s === 'filed') filed++;
-    else if (s === 'na') na++;
-    else if (isOverdue(o, year, s)) overdue++;
-  }
+  obls.forEach(o => {
+    const s = getStatus(yr, mid, o.id);
+    if (s==='filed') filed++;
+    else if (s==='na') na++;
+    else if (isOverdue(o,yr,s)) overdue++;
+  });
   const active = obls.length - na;
-  return { total:obls.length, filed, overdue, na, active, pct: active ? Math.round(filed/active*100) : 100 };
-}
-function memberBorderColor(year, memberId) {
-  const m = memberForId(memberId);
-  if (m.active_from > year) return 'border-gray-200 opacity-50';
-  const { filed, overdue, active } = obligationProgress(year, memberId);
-  if (overdue > 0) return 'border-red-400';
-  if (filed === active) return 'border-green-400';
-  if (filed > 0) return 'border-amber-400';
-  return 'border-blue-200';
-}
-function statusBadge(status, label='') {
-  const map = {
-    filed:       ['badge-filed',       '✓ Filed'],
-    in_progress: ['badge-in-progress', '↻ In Progress'],
-    not_started: ['badge-not-started', '○ Not Started'],
-    na:          ['badge-na',          '– N/A'],
-    overdue:     ['badge-overdue',     '⚠ Overdue'],
-  };
-  const [cls, def] = map[status] || map.not_started;
-  return `<span class="badge ${cls}">${label || def}</span>`;
-}
-function jurisdictionBadge(j) {
-  return j === 'US'
-    ? `<span class="badge badge-us">US</span>`
-    : `<span class="badge badge-india">India</span>`;
-}
-function categoryLabel(cat) {
-  return { returns:'Returns', payments:'Tax Payments', k1s:'K-1 Issuances' }[cat] || cat;
+  return {total:obls.length, filed, overdue, na, active, pct: active ? Math.round(filed/active*100) : 100};
 }
 
-// ─── NAVIGATION ───────────────────────────────────────────────────────────────
-function navigate(view, memberId) {
-  state.view = view;
-  if (memberId) state.member = memberId;
+function memberBorder(yr, mid) {
+  const m = memberById(mid);
+  if (m.active_from > yr) return 'border-gray';
+  const {filed, overdue, active} = progress(yr, mid);
+  if (overdue > 0) return 'border-red';
+  if (active > 0 && filed === active) return 'border-green';
+  if (filed > 0) return 'border-amber';
+  return 'border-blue';
+}
+
+const STATUS_OPTS = [
+  {v:'filed',       label:'✓ Filed',       cls:'badge-filed'},
+  {v:'in_progress', label:'↻ In Progress', cls:'badge-prog'},
+  {v:'not_started', label:'○ Not Started', cls:'badge-pending'},
+  {v:'na',          label:'– N/A',         cls:'badge-na'},
+  {v:'overdue',     label:'⚠ Overdue',     cls:'badge-overdue'},
+];
+function statusBadge(s) {
+  const o = STATUS_OPTS.find(x=>x.v===s) || STATUS_OPTS[2];
+  return `<span class="badge ${o.cls}">${o.label}</span>`;
+}
+function jurDot(j) {
+  return `<span class="jur-dot ${j==='US'?'jur-us':'jur-india'}"></span>`;
+}
+function jurBadge(j) {
+  return `<span class="badge ${j==='US'?'badge-us':'badge-india'}">${j}</span>`;
+}
+const catLabel = c => ({returns:'Returns', payments:'Tax Payments', k1s:'K-1 Issuances'}[c] || c);
+
+// ─── NAV ──────────────────────────────────────────────────────────────────────
+function navigate(view, mid) {
+  S.view = view; if (mid) S.member = mid;
   document.querySelectorAll('.nav-tab').forEach((t,i) => {
-    const views = ['dashboard','checklist','registry','drive','settings'];
-    t.classList.toggle('active', views[i] === view);
+    t.classList.toggle('active', ['dashboard','checklist','registry','drive','settings'][i]===view);
   });
   render();
 }
-function setYear(y) {
-  state.year = y;
-  render();
-}
+function setYear(y) { S.year = y; render(); }
 
-// ─── RENDER ROUTER ────────────────────────────────────────────────────────────
+// ─── RENDER ───────────────────────────────────────────────────────────────────
 function render() {
-  document.getElementById('yearSelect').value = state.year;
-  const main = document.getElementById('main');
-  switch (state.view) {
-    case 'dashboard': main.innerHTML = renderDashboard(); break;
-    case 'checklist': main.innerHTML = renderChecklist(); break;
-    case 'registry':  main.innerHTML = renderRegistry(); break;
-    case 'drive':     main.innerHTML = renderDriveScan(); break;
-    case 'settings':  main.innerHTML = renderSettings(); break;
-  }
+  document.getElementById('yearSelect').value = S.year;
+  const views = {dashboard:renderDashboard, checklist:renderChecklist, registry:renderRegistry, drive:renderDrive, settings:renderSettings};
+  document.getElementById('main').innerHTML = (views[S.view] || renderDashboard)();
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function renderDashboard() {
-  const yr = state.year;
+  const yr = S.year;
 
-  // Upcoming deadlines across all members
-  const upcoming = [];
+  // Build deadline rows
+  const rows = [];
   for (const m of MEMBERS) {
     if (m.active_from > yr) continue;
-    for (const o of getObligations(m.id, yr)) {
+    for (const o of getObls(m.id, yr)) {
       const s = getStatus(yr, m.id, o.id);
-      if (s === 'filed' || s === 'na') continue;
-      const d  = dueDate(o, yr);
-      const ex = extDate(o, yr);
-      const od = d < TODAY;
-      upcoming.push({ member:m.label, memberId:m.id, obl:o, due:d, ext:ex, status:s, overdue:od });
+      if (s==='filed' || s==='na') continue;
+      const d = dueDate(o,yr), ex = extDate(o,yr), od = isOverdue(o,yr,s);
+      rows.push({member:m.label, memberId:m.id, o, due:d, ext:ex, status:s, od});
     }
   }
-  upcoming.sort((a,b) => a.due - b.due);
+  rows.sort((a,b) => a.due-b.due);
 
-  // Stats
-  let totalFiled=0, totalActive=0, totalOverdue=0;
+  let tFiled=0, tActive=0, tOverdue=0;
   for (const m of MEMBERS) {
     if (m.active_from > yr) continue;
-    const p = obligationProgress(yr, m.id);
-    totalFiled += p.filed;
-    totalActive += p.active;
-    totalOverdue += p.overdue;
+    const p = progress(yr, m.id);
+    tFiled += p.filed; tActive += p.active; tOverdue += p.overdue;
   }
 
   return `
-  <div class="space-y-6">
-    <!-- Header -->
+  <div style="display:flex;flex-direction:column;gap:20px">
+
+    <!-- Title -->
     <div>
-      <h1 class="text-2xl font-bold text-gray-900">Tax Year ${yr}</h1>
-      <p class="text-gray-500 text-sm mt-1">
-        US returns due ${yr < CURRENT_YEAR ? 'Apr 15, '+(yr+1) : 'Apr 15, '+(yr+1)} · India ITR due Jul 31, ${yr+1}
+      <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0">Tax Year ${yr}</h1>
+      <p style="font-size:13px;color:#6b7280;margin:4px 0 0">
+        US returns due Apr 15, ${yr+1} (Oct 15 with extension) &nbsp;·&nbsp;
+        India ITR due Jul 31, ${yr+1}
       </p>
     </div>
 
-    <!-- Stats row -->
-    <div class="grid grid-cols-3 gap-4">
-      <div class="card text-center">
-        <div class="text-3xl font-bold text-green-600">${totalFiled}</div>
-        <div class="text-sm text-gray-500 mt-1">Filed / ${totalActive} active obligations</div>
+    <!-- Stats -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+      <div class="card" style="text-align:center">
+        <div style="font-size:32px;font-weight:700;color:#16a34a">${tFiled}</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:2px">Filed of ${tActive} active obligations</div>
       </div>
-      <div class="card text-center">
-        <div class="text-3xl font-bold ${totalOverdue > 0 ? 'text-red-600' : 'text-gray-400'}">${totalOverdue}</div>
-        <div class="text-sm text-gray-500 mt-1">Overdue</div>
+      <div class="card" style="text-align:center">
+        <div style="font-size:32px;font-weight:700;color:${tOverdue>0?'#dc2626':'#9ca3af'}">${tOverdue}</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:2px">Overdue</div>
       </div>
-      <div class="card text-center">
-        <div class="text-3xl font-bold text-amber-600">${upcoming.filter(u => !u.overdue).length}</div>
-        <div class="text-sm text-gray-500 mt-1">Upcoming deadlines</div>
+      <div class="card" style="text-align:center">
+        <div style="font-size:32px;font-weight:700;color:#d97706">${rows.filter(r=>!r.od).length}</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:2px">Upcoming deadlines</div>
       </div>
     </div>
 
     <!-- Member cards -->
     <div>
-      <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Family & Entities</h2>
-      <div class="grid grid-cols-5 gap-3">
-        ${MEMBERS.map(m => renderMemberCard(m, yr)).join('')}
+      <div style="font-size:11px;font-weight:600;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px">Family & Entities</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+        ${MEMBERS.map(m => {
+          const inactive = m.active_from > yr;
+          const {filed, active, overdue} = progress(yr, m.id);
+          const pct = active ? Math.round(filed/active*100) : 100;
+          const border = memberBorder(yr, m.id);
+          const fillColor = overdue>0 ? '#f87171' : pct===100 ? '#4ade80' : '#fbbf24';
+          return `
+          <div class="member-card ${border}" onclick="navigate('checklist','${m.id}')">
+            <div style="font-size:22px;margin-bottom:4px">${m.icon}</div>
+            <div style="font-weight:600;font-size:13px;color:#111827">${m.label}</div>
+            <div style="font-size:11px;color:#9ca3af;margin-top:2px">${m.subtitle}</div>
+            <div style="margin-top:8px;font-size:12px;color:#6b7280">
+              ${inactive ? `<span style="color:#9ca3af">Starts ${m.active_from}</span>`
+                : `${filed}/${active} filed${overdue>0?` · <span style='color:#dc2626'>${overdue} overdue</span>`:''}`}
+            </div>
+            ${!inactive ? `<div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>` : ''}
+          </div>`;
+        }).join('')}
       </div>
     </div>
 
-    <!-- Two-column: upcoming deadlines + income flows -->
-    <div class="grid grid-cols-3 gap-4">
-      <!-- Upcoming deadlines -->
-      <div class="col-span-2 card">
-        <h2 class="font-semibold text-gray-900 mb-3">Deadlines — Tax Year ${yr}</h2>
-        ${upcoming.length === 0
-          ? `<p class="text-gray-400 text-sm">All obligations filed or N/A. ✓</p>`
-          : `<table>
-              <thead><tr>
-                <th>Obligation</th><th>Who</th><th>Due Date</th><th>Status</th>
-              </tr></thead>
-              <tbody>
-                ${upcoming.slice(0,12).map(u => `
-                  <tr class="${u.overdue ? 'bg-red-50' : ''}">
-                    <td>
-                      ${jurisdictionBadge(u.obl.jurisdiction)}
-                      <span class="ml-1.5">${u.obl.label}</span>
-                      ${u.obl.cond ? `<span class="text-gray-400 text-xs ml-1">(if applicable)</span>` : ''}
-                    </td>
-                    <td class="text-gray-600 text-xs">${u.member}</td>
-                    <td>
-                      <span class="${u.overdue ? 'text-red-700 font-medium' : 'text-gray-700'}">${fmtDate(u.due)}</span>
-                      ${u.ext ? `<span class="text-gray-400 text-xs ml-1">/ ${fmtDate(u.ext)}</span>` : ''}
-                    </td>
-                    <td>${statusBadge(u.overdue ? 'overdue' : u.status)}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>`}
+    <!-- Deadlines + Credits -->
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px">
+
+      <!-- Deadlines table -->
+      <div class="card">
+        <div style="font-weight:600;font-size:15px;color:#111827;margin-bottom:14px">Deadlines — Tax Year ${yr}</div>
+        ${rows.length===0 ? `<p style="color:#9ca3af;font-size:13px">All obligations filed or N/A ✓</p>` : `
+        <table>
+          <thead><tr>
+            <th style="width:32px"></th>
+            <th>Obligation</th>
+            <th>Who</th>
+            <th>Due</th>
+            <th>Extension</th>
+            <th>Status</th>
+          </tr></thead>
+          <tbody>
+            ${rows.slice(0,14).map(r => `
+            <tr style="${r.od?'background:#fff5f5':''}">
+              <td style="padding:9px 4px 9px 10px">${jurDot(r.o.jur)}</td>
+              <td style="font-size:13.5px;color:#111827;font-weight:500">
+                ${r.o.label}
+                ${r.o.cond ? `<span style="color:#9ca3af;font-size:11px;font-weight:400;margin-left:4px">(if applicable)</span>` : ''}
+              </td>
+              <td style="font-size:13px;color:#6b7280">${r.member}</td>
+              <td style="font-size:13px;font-weight:600;color:${r.od?'#dc2626':'#374151'};white-space:nowrap">${fmtDate(r.due)}</td>
+              <td style="font-size:13px;color:#9ca3af;white-space:nowrap">${r.ext?fmtDate(r.ext):'—'}</td>
+              <td>${statusBadge(r.od?'overdue':r.status)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`}
       </div>
 
-      <!-- Cross-border credit reminder -->
-      <div class="card">
-        <h2 class="font-semibold text-gray-900 mb-3">Cross-Border Credits</h2>
-        <div class="space-y-3 text-sm">
-          <div class="p-3 bg-indigo-50 rounded-lg">
-            <div class="font-medium text-indigo-800">India → US FTC</div>
-            <div class="text-indigo-700 mt-1 text-xs">India taxes paid on India income claimed as Foreign Tax Credit on Form 1040 (Form 1116)</div>
+      <!-- Cross-border panel -->
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="card" style="background:#eef2ff;border-color:#c7d2fe">
+          <div style="font-weight:600;color:#3730a3;font-size:13px;margin-bottom:4px">🇮🇳 → 🇺🇸 Foreign Tax Credit</div>
+          <div style="font-size:12px;color:#4338ca">India taxes paid on India income → Form 1116 FTC on US 1040</div>
+        </div>
+        <div class="card" style="background:#fff7ed;border-color:#fed7aa">
+          <div style="font-weight:600;color:#c2410c;font-size:13px;margin-bottom:4px">🇺🇸 → 🇮🇳 Tax Credit</div>
+          <div style="font-size:12px;color:#ea580c">US taxes paid on US income → credit on India ITR-2</div>
+        </div>
+        <div class="card" style="background:#faf5ff;border-color:#e9d5ff">
+          <div style="font-weight:600;color:#7e22ce;font-size:13px;margin-bottom:6px">Trust K-1 Flows</div>
+          <div style="font-size:12px;color:#6b21a8;line-height:1.6">
+            <b>Salar:</b> Chhaya 50%, Sakina 25%, Aliza 25%<br>
+            <b>Mariam:</b> Jawad 50%, Chhaya 25%, Sakina 12.5%, Aliza 12.5%<br>
+            <span style="color:#9ca3af">(Mariam India income starts 2027)</span>
           </div>
-          <div class="p-3 bg-orange-50 rounded-lg">
-            <div class="font-medium text-orange-800">US → India Credit</div>
-            <div class="text-orange-700 mt-1 text-xs">US taxes paid on US income claimed as tax credit on India ITR-2</div>
-          </div>
-          <div class="p-3 bg-purple-50 rounded-lg">
-            <div class="font-medium text-purple-800">Trust K-1 Flows</div>
-            <div class="text-purple-700 mt-1 text-xs">Salar Trust → Chhaya (50%), Sakina (25%), Aliza (25%)<br>Mariam Trust → Jawad (50%), Chhaya (25%), Sakina & Aliza (12.5% ea.)</div>
-          </div>
-          ${yr >= 2027 ? `
-          <div class="p-3 bg-gray-50 rounded-lg">
-            <div class="font-medium text-gray-700">Mariam Trust (active ${yr})</div>
-            <div class="text-gray-600 mt-1 text-xs">India income distributed via K-1. Beneficiaries pay India tax individually and claim FTC on 1040.</div>
-          </div>` : `
-          <div class="p-3 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-            <div class="font-medium text-gray-400">Mariam Trust</div>
-            <div class="text-gray-400 mt-1 text-xs">India income obligations begin 2027.</div>
-          </div>`}
         </div>
       </div>
     </div>
   </div>`;
 }
 
-function renderMemberCard(m, yr) {
-  const inactive = m.active_from > yr;
-  const { filed, active, overdue, pct } = obligationProgress(yr, m.id);
-  const border = memberBorderColor(yr, m.id);
-  const statusText = inactive
-    ? `<span class="text-xs text-gray-400">Starts ${m.active_from}</span>`
-    : `<span class="text-xs text-gray-600">${filed}/${active} filed${overdue > 0 ? ` · <span class='text-red-600'>${overdue} overdue</span>` : ''}</span>`;
-  const pill = inactive ? ''
-    : `<div class="w-full bg-gray-100 rounded-full h-1 mt-2">
-         <div class="h-1 rounded-full ${overdue > 0 ? 'bg-red-400' : 'bg-green-400'}" style="width:${pct}%"></div>
-       </div>`;
-  return `
-  <div class="member-card ${border}" onclick="navigate('checklist','${m.id}')">
-    <div class="text-2xl mb-1">${m.icon}</div>
-    <div class="font-semibold text-gray-900 text-sm">${m.label}</div>
-    <div class="text-xs text-gray-500 mt-0.5">${m.subtitle}</div>
-    <div class="mt-2">${statusText}</div>
-    ${pill}
-  </div>`;
-}
-
 // ─── CHECKLIST ────────────────────────────────────────────────────────────────
 function renderChecklist() {
-  const yr = state.year;
-  const mid = state.member;
-  const m = memberForId(mid);
-  const obls = getObligations(mid, yr);
-
-  // Group by category
+  const yr = S.year, mid = S.member;
+  const m = memberById(mid);
+  const obls = getObls(mid, yr);
   const groups = {};
-  for (const o of obls) {
-    if (!groups[o.cat]) groups[o.cat] = [];
-    groups[o.cat].push(o);
-  }
+  obls.forEach(o => { if (!groups[o.cat]) groups[o.cat]=[]; groups[o.cat].push(o); });
 
-  const memberOptions = MEMBERS.map(m2 =>
-    `<option value="${m2.id}" ${m2.id===mid?'selected':''}>${m2.label}</option>`
-  ).join('');
+  const memberSel = MEMBERS.map(m2 =>
+    `<option value="${m2.id}" ${m2.id===mid?'selected':''}>${m2.label}</option>`).join('');
 
   const inactive = m.active_from > yr;
 
   return `
-  <div class="space-y-5">
-    <!-- Header with member selector -->
-    <div class="flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <select onchange="navigate('checklist',this.value)">${memberOptions}</select>
-        <h1 class="text-xl font-bold text-gray-900">${m.label}</h1>
-        <span class="text-gray-400">— Tax Year ${yr}</span>
-      </div>
-      <div class="flex items-center gap-2 text-sm text-gray-500">
-        ${['filed','in_progress','not_started','na'].map(s => statusBadge(s)).join('')}
-      </div>
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <select style="border:1px solid #d1d5db;border-radius:7px;padding:5px 10px;font-size:13px;color:#374151;background:#fff"
+        onchange="navigate('checklist',this.value)">${memberSel}</select>
+      <h1 style="font-size:20px;font-weight:700;color:#111827;margin:0">${m.label}</h1>
+      <span style="color:#9ca3af;font-size:14px">— Tax Year ${yr}</span>
     </div>
 
     ${inactive ? `
-    <div class="card border-dashed border-2 border-gray-200 text-center py-8">
-      <div class="text-gray-400 text-lg mb-2">No obligations for ${yr}</div>
-      <div class="text-gray-500 text-sm">${m.label} tax obligations begin in ${m.active_from}.</div>
-    </div>` : obls.length === 0 ? `
-    <div class="card text-center py-8 text-gray-400">No obligations defined for this member.</div>
+    <div class="card" style="border-style:dashed;text-align:center;padding:40px">
+      <div style="color:#9ca3af;font-size:16px;margin-bottom:6px">No obligations for ${yr}</div>
+      <div style="color:#6b7280;font-size:13px">${m.label} obligations begin in ${m.active_from}.</div>
+    </div>` : obls.length===0 ? `
+    <div class="card" style="text-align:center;padding:40px;color:#9ca3af">No obligations defined.</div>
     ` : Object.entries(groups).map(([cat, items]) => `
     <div class="card">
-      <h2 class="font-semibold text-gray-900 mb-3">${categoryLabel(cat)}</h2>
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:12px">${catLabel(cat)}</div>
       <table>
         <thead><tr>
-          <th>Obligation</th>
-          <th>Jurisdiction</th>
-          <th>Due Date</th>
-          <th>Extension</th>
-          <th>Status</th>
-          <th>Notes</th>
+          <th></th><th>Obligation</th><th>Jurisdiction</th>
+          <th>Due</th><th>Extension</th><th>Status</th><th>Notes</th>
         </tr></thead>
         <tbody>
           ${items.map(o => {
             const s = getStatus(yr, mid, o.id);
-            const d = dueDate(o, yr);
-            const ex = extDate(o, yr);
-            const od = isOverdue(o, yr, s);
-            const effectiveStatus = od && s !== 'filed' && s !== 'na' ? 'overdue' : s;
+            const d = dueDate(o,yr), ex = extDate(o,yr), od = isOverdue(o,yr,s);
+            const dispStatus = od && s!=='filed' && s!=='na' ? 'overdue' : s;
             return `
-            <tr class="${od && s !== 'filed' && s !== 'na' ? 'bg-red-50' : ''}">
-              <td>
-                ${o.cond ? '<span title="Conditional" class="text-gray-400 mr-1">◈</span>' : ''}
-                <span class="font-medium text-gray-900">${o.label}</span>
+            <tr style="${od&&s!=='filed'&&s!=='na'?'background:#fff5f5':''}">
+              <td style="width:18px;padding:9px 4px 9px 10px">${jurDot(o.jur)}</td>
+              <td style="font-weight:500;color:#111827">
+                ${o.cond?'<span style="color:#d1d5db;font-size:12px">◈ </span>':''}${o.label}
               </td>
-              <td>${jurisdictionBadge(o.jurisdiction)}</td>
-              <td class="${od && s!=='filed' && s!=='na' ? 'text-red-700 font-medium' : 'text-gray-700'}">${fmtDate(d)}</td>
-              <td class="text-gray-500">${ex ? fmtDate(ex) : '—'}</td>
+              <td>${jurBadge(o.jur)}</td>
+              <td style="font-weight:600;color:${od&&s!=='filed'&&s!=='na'?'#dc2626':'#374151'};white-space:nowrap">${fmtDate(d)}</td>
+              <td style="color:#9ca3af;white-space:nowrap">${ex?fmtDate(ex):'—'}</td>
               <td>
-                <select class="text-xs border-0 bg-transparent cursor-pointer"
-                  onchange="setStatus(${yr},'${mid}','${o.id}',this.value);render()">
-                  ${['filed','in_progress','not_started','na','overdue'].map(v =>
-                    `<option value="${v}" ${v===effectiveStatus?'selected':''}>${{filed:'✓ Filed',in_progress:'↻ In Progress',not_started:'○ Not Started',na:'– N/A',overdue:'⚠ Overdue'}[v]}</option>`
-                  ).join('')}
+                <select class="status-select" onchange="setStatus(${yr},'${mid}','${o.id}',this.value);render()">
+                  ${STATUS_OPTS.map(x=>`<option value="${x.v}" ${x.v===dispStatus?'selected':''}>${x.label}</option>`).join('')}
                 </select>
               </td>
-              <td class="text-xs text-gray-500 max-w-xs">${o.notes||''}</td>
+              <td style="font-size:12px;color:#9ca3af;max-width:200px">${o.notes||''}</td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>
     </div>`).join('')}
 
-    ${!inactive && obls.length > 0 ? `
-    <!-- Notes section -->
+    ${!inactive && obls.length>0 ? `
     <div class="card">
-      <h2 class="font-semibold text-gray-900 mb-2">Notes for ${yr}</h2>
-      <textarea id="memberNotes" rows="3" placeholder="Add notes for this year…"
-        class="w-full border border-gray-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        onchange="saveNote('${mid}',${yr},this.value)">${loadNote(mid,yr)}</textarea>
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:8px">Notes for ${yr}</div>
+      <textarea rows="3" placeholder="Add notes for this year…"
+        onchange="localStorage.setItem('tp_note_${mid}_${yr}',this.value)"
+        >${localStorage.getItem('tp_note_'+mid+'_'+yr)||''}</textarea>
     </div>` : ''}
   </div>`;
 }
 
-function saveNote(mid, yr, text) {
-  const key = `note_${mid}_${yr}`;
-  localStorage.setItem(key, text);
-}
-function loadNote(mid, yr) {
-  return localStorage.getItem(`note_${mid}_${yr}`) || '';
-}
-
 // ─── GIFT REGISTRY ────────────────────────────────────────────────────────────
 function renderRegistry() {
-  // Unified credit ledger
-  let jawadCumTaxable = 0, chhayaCumTaxable = 0;
-  let jawadCumCredit = 0, chhayaCumCredit = 0;
-  const JAWAD_LIFETIME_CREDIT = 5_945_800;
-  const CHHAYA_LIFETIME_CREDIT = 5_945_800;
-
-  const ledgerRows = GIFTS.map(g => {
-    jawadCumTaxable += g.jawad_taxable || 0;
-    chhayaCumTaxable += g.chhaya_taxable || 0;
-    jawadCumCredit += g.jawad_credit_used || 0;
-    chhayaCumCredit += g.chhaya_credit_used || 0;
-    const jawadRemaining = JAWAD_LIFETIME_CREDIT - jawadCumCredit;
-    const chhayaRemaining = CHHAYA_LIFETIME_CREDIT - chhayaCumCredit;
-    return { ...g, jawadCumTaxable, chhayaCumTaxable, jawadCumCredit, chhayaCumCredit, jawadRemaining, chhayaRemaining };
-  });
-  const lastRow = ledgerRows[ledgerRows.length - 1] || {};
-  const jawadRemaining = JAWAD_LIFETIME_CREDIT - jawadCumCredit;
-  const chhayaRemaining = CHHAYA_LIFETIME_CREDIT - chhayaCumCredit;
-
+  const CREDIT = 5_945_800;
+  let jTax=0, cTax=0, jCr=0, cCr=0;
   return `
-  <div class="space-y-5">
-    <div class="flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-900">Gift Registry</h1>
-        <p class="text-sm text-gray-500 mt-1">Form 709 filing history · Unified credit ledger · 2026 basic exclusion: $15,000,000 / applicable credit: $5,945,800 per donor</p>
-      </div>
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div>
+      <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0">Gift Registry</h1>
+      <p style="font-size:13px;color:#6b7280;margin:4px 0 0">Form 709 history · Unified credit ledger · 2026 applicable credit: $5,945,800 per donor</p>
     </div>
 
-    <!-- Credit ledger summary cards -->
-    <div class="grid grid-cols-2 gap-4">
-      ${[['Jawad Ayaz', jawadCumTaxable, jawadCumCredit, jawadRemaining], ['Chhaya Ayaz', chhayaCumTaxable, chhayaCumCredit, chhayaRemaining]].map(([name, cumTax, cumCredit, remaining]) => `
-      <div class="card">
-        <div class="font-semibold text-gray-900 mb-3">${name} — Unified Credit Ledger</div>
-        <div class="grid grid-cols-3 gap-3 text-sm">
-          <div>
-            <div class="text-gray-500 text-xs">Cumulative Taxable Gifts</div>
-            <div class="font-semibold text-gray-900 mt-1">${fmt(cumTax)}</div>
+    <!-- Ledger cards -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${['Jawad Ayaz','Chhaya Ayaz'].map((name,i) => {
+        let cumTax=0, cumCr=0;
+        GIFTS.forEach(g => { cumTax += (i===0?g.jawad_tax:g.chhaya_tax)||0; cumCr += (i===0?g.jawad_cr:g.chhaya_cr)||0; });
+        const rem = CREDIT - cumCr;
+        const pct = Math.min(100,(cumCr/CREDIT*100)).toFixed(1);
+        return `
+        <div class="card">
+          <div style="font-weight:600;font-size:14px;color:#111827;margin-bottom:12px">${name}</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
+            <div>
+              <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Cumulative Taxable</div>
+              <div style="font-size:16px;font-weight:700;color:#111827;margin-top:3px">${fmt(cumTax)}</div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Credit Used</div>
+              <div style="font-size:16px;font-weight:700;color:#d97706;margin-top:3px">${fmt(cumCr)}</div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em">Credit Remaining</div>
+              <div style="font-size:16px;font-weight:700;color:#16a34a;margin-top:3px">${fmt(rem)}</div>
+            </div>
           </div>
-          <div>
-            <div class="text-gray-500 text-xs">Credit Used</div>
-            <div class="font-semibold text-amber-700 mt-1">${fmt(cumCredit)}</div>
-          </div>
-          <div>
-            <div class="text-gray-500 text-xs">Credit Remaining</div>
-            <div class="font-semibold text-green-700 mt-1">${fmt(remaining)}</div>
-          </div>
-        </div>
-        <div class="mt-3 w-full bg-gray-100 rounded-full h-2">
-          <div class="h-2 rounded-full bg-amber-400" style="width:${Math.min(100,cumCredit/JAWAD_LIFETIME_CREDIT*100).toFixed(1)}%"></div>
-        </div>
-        <div class="text-xs text-gray-400 mt-1">${(cumCredit/JAWAD_LIFETIME_CREDIT*100).toFixed(1)}% of lifetime credit used</div>
-      </div>`).join('')}
+          <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:#fbbf24"></div></div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:4px">${pct}% of lifetime credit used</div>
+        </div>`;
+      }).join('')}
     </div>
 
-    <!-- Annual exclusion reference -->
+    <!-- Annual exclusion ref -->
     <div class="card">
-      <h2 class="font-semibold text-gray-900 mb-2">Annual Gift Exclusion Reference</h2>
-      <div class="flex gap-6 text-sm">
-        ${[[2022,16000],[2023,17000],[2024,18000],[2025,19000],[2026,19000]].map(([y,amt]) =>
-          `<div class="text-center">
-            <div class="text-gray-500 text-xs">${y}</div>
-            <div class="font-semibold text-gray-900">$${amt.toLocaleString()}</div>
-            <div class="text-xs text-gray-400">per donee</div>
-          </div>`
-        ).join('')}
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:10px">Annual Gift Exclusion</div>
+      <div style="display:flex;gap:24px">
+        ${[[2022,16000],[2023,17000],[2024,18000],[2025,19000],[2026,19000]].map(([y,a]) =>
+          `<div style="text-align:center">
+            <div style="font-size:11px;color:#9ca3af">${y}</div>
+            <div style="font-weight:700;font-size:14px;color:#111827">$${a.toLocaleString()}</div>
+            <div style="font-size:10px;color:#9ca3af">per donee</div>
+          </div>`).join('')}
       </div>
     </div>
 
     <!-- Gift table -->
     <div class="card">
-      <h2 class="font-semibold text-gray-900 mb-3">Form 709 Filing History</h2>
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:12px">Form 709 Filing History</div>
       <table>
         <thead><tr>
-          <th>Year</th>
-          <th>Donee</th>
-          <th>Asset</th>
-          <th>Total FMV</th>
-          <th>Excl / Donor</th>
-          <th>Jawad Taxable</th>
-          <th>Chhaya Taxable</th>
-          <th>Credit Used (each)</th>
-          <th>709 Filed</th>
-          <th>Notes</th>
+          <th>Year</th><th>Donee</th><th>Asset</th><th>Total FMV</th>
+          <th>Excl/Donor</th><th>Jawad Taxable</th><th>Chhaya Taxable</th>
+          <th>Credit Used</th><th>Filed</th><th>Notes</th>
         </tr></thead>
         <tbody>
           ${GIFTS.map(g => `
           <tr>
-            <td class="font-semibold text-gray-900">${g.year}</td>
-            <td class="text-sm text-gray-700 max-w-xs">${g.donee}</td>
-            <td class="text-sm text-gray-600">${g.asset}</td>
-            <td class="text-sm">${fmt(g.total_fmv)}</td>
-            <td class="text-sm">${fmt(g.excl_per_donor)} × ${g.n_donees}</td>
-            <td class="text-sm font-medium">${fmt(g.jawad_taxable)}</td>
-            <td class="text-sm font-medium">${fmt(g.chhaya_taxable)}</td>
-            <td class="text-sm text-amber-700">${fmt(g.jawad_credit_used)}</td>
-            <td>${g.filed ? '<span class="badge badge-filed">✓ Filed</span>' : '<span class="badge badge-not-started">○ Pending</span>'}</td>
-            <td class="text-xs text-gray-500 max-w-xs">${g.notes}</td>
+            <td style="font-weight:700">${g.year}</td>
+            <td style="font-size:12px;max-width:180px">${g.donee}</td>
+            <td style="font-size:12px;color:#6b7280">${g.asset}</td>
+            <td>${fmt(g.total_fmv)}</td>
+            <td>${fmt(g.excl_per)}${g.n_donees>1?` ×${g.n_donees}`:''}</td>
+            <td style="font-weight:600">${fmt(g.jawad_tax)}</td>
+            <td style="font-weight:600">${fmt(g.chhaya_tax)}</td>
+            <td style="color:#d97706">${fmt(g.jawad_cr)}</td>
+            <td>${g.filed?statusBadge('filed'):statusBadge('not_started')}</td>
+            <td style="font-size:11px;color:#9ca3af;max-width:160px">${g.notes}</td>
           </tr>`).join('')}
         </tbody>
       </table>
     </div>
 
-    <!-- 3520 placeholder -->
-    <div class="card border-dashed border-2 border-gray-200">
-      <div class="flex items-center justify-between">
-        <div>
-          <h2 class="font-semibold text-gray-700">Form 3520 — Foreign Gifts to Mariam Ayaz Trust</h2>
-          <p class="text-sm text-gray-500 mt-1">3520 filings are in the respective year folders in Google Drive. Registry to be populated.</p>
-        </div>
-        <button class="btn btn-ghost text-sm" onclick="alert('3520 registry — coming in Phase 4')">Add 3520 →</button>
+    <!-- 3520 stub -->
+    <div class="card" style="border-style:dashed;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-weight:600;color:#6b7280;font-size:14px">Form 3520 — Foreign Gifts to Mariam Ayaz Trust</div>
+        <div style="font-size:12px;color:#9ca3af;margin-top:2px">3520 filings in respective year folders in Google Drive. Registry coming in Phase 4.</div>
       </div>
+      <button class="btn btn-ghost" onclick="alert('Coming in Phase 4')">Add 3520 →</button>
     </div>
   </div>`;
 }
 
 // ─── DRIVE SCAN ───────────────────────────────────────────────────────────────
-const DRIVE_FOLDER_BASE = 'My Drive/US taxes';
-
-// Documents expected per member per year (keyword patterns to search for)
 const EXPECTED_DOCS = {
   jawad_chhaya: [
-    { label:'Form 1040 (US Joint Return)',    keywords:['1040','tax return','filed tax'], ext:'.pdf' },
-    { label:'FinCEN 114 / FBAR',              keywords:['FBAR','114','FinCEN'], ext:'.pdf' },
-    { label:'Form 709 (Gift Tax)',            keywords:['709','gift tax'], ext:'.pdf' },
-    { label:'Form 1099-CONS (Morgan Stanley)',keywords:['1099','CONS','consolidated','MS'], ext:'.pdf' },
-    { label:'India ITR — Jawad',              keywords:['ITR','Jawad','income tax return'], ext:'.pdf' },
-    { label:'India ITR — Chhaya',             keywords:['ITR','Chhaya'], ext:'.pdf' },
-    { label:'India CAS (CDSL/NSDL)',          keywords:['CAS','consolidated account','CDSL','NSDL'], ext:'.pdf' },
+    { label:'Form 1040 (Joint Return)',    kw:['1040','tax return','filed tax'] },
+    { label:'FinCEN 114 / FBAR',          kw:['FBAR','FinCEN','114'] },
+    { label:'Form 709 (Gift Tax)',        kw:['709','gift tax'] },
+    { label:'1099-CONS (Morgan Stanley)', kw:['1099','CONS','consolidated','MS'] },
+    { label:'K-1 from Salar Trust',      kw:['k-1','salar','K1'] },
+    { label:'India ITR — Jawad',         kw:['ITR','Jawad','income tax'] },
+    { label:'India ITR — Chhaya',        kw:['ITR','Chhaya'] },
+    { label:'India CAS (CDSL/NSDL)',     kw:['CAS','consolidated account','CDSL','NSDL'] },
   ],
-  salar_trust:  [{ label:'Form 1041 (Trust Return)', keywords:['1041','salar'], ext:'.pdf' }],
-  mariam_trust: [{ label:'Form 1041 (Trust Return)', keywords:['1041','mariam'], ext:'.pdf' },
-                 { label:'India Trust Return',       keywords:['mariam','india','trust return'], ext:'.pdf' }],
-  sakina:  [{ label:'Form 1040 (Sakina)', keywords:['1040','sakina'], ext:'.pdf' },
-            { label:'India ITR (Sakina)', keywords:['ITR','sakina'], ext:'.pdf' }],
-  aliza:   [{ label:'Form 1040 (Aliza)', keywords:['1040','aliza'], ext:'.pdf' },
-            { label:'India ITR (Aliza)', keywords:['ITR','aliza','NRI'], ext:'.pdf' }],
+  salar_trust:  [{ label:'Form 1041', kw:['1041','salar'] }],
+  mariam_trust: [{ label:'Form 1041 — US', kw:['1041','mariam'] }, { label:'India Trust Return', kw:['mariam','india','trust'] }],
+  sakina: [{ label:'Form 1040 (Sakina)', kw:['1040','sakina'] }, { label:'India ITR', kw:['ITR','sakina'] }],
+  aliza:  [{ label:'Form 1040 (Aliza)',  kw:['1040','aliza']  }, { label:'India ITR', kw:['ITR','aliza']  }],
 };
 
-function renderDriveScan() {
-  const connected = !!state.driveToken;
+function renderDrive() {
+  const connected = !!S.driveToken;
   return `
-  <div class="space-y-5">
+  <div style="display:flex;flex-direction:column;gap:16px;max-width:800px">
     <div>
-      <h1 class="text-2xl font-bold text-gray-900">Google Drive Scan</h1>
-      <p class="text-sm text-gray-500 mt-1">Scans <code>My Drive/US taxes/{year} Taxes/</code> to verify expected documents are present.</p>
+      <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0">Drive Scan</h1>
+      <p style="font-size:13px;color:#6b7280;margin:4px 0 0">Scans <code>My Drive/US taxes/${S.year} Taxes/</code> and verifies expected documents.</p>
     </div>
 
-    ${!state.gClientId ? `
-    <div class="card bg-amber-50 border-amber-200">
-      <p class="text-amber-800 text-sm font-medium">Google Client ID not configured. Go to <button class="underline" onclick="navigate('settings')">Settings</button> and enter your OAuth Client ID.</p>
+    ${!S.gClientId ? `
+    <div class="card" style="background:#fffbeb;border-color:#fde68a">
+      <p style="color:#92400e;font-size:13px;font-weight:500">Google Client ID not configured. Go to <button style="background:none;border:none;color:#92400e;text-decoration:underline;cursor:pointer;font-size:13px" onclick="navigate('settings')">Settings</button> and enter your OAuth Client ID.</p>
     </div>` : !connected ? `
-    <div class="card text-center py-8">
-      <div class="text-gray-500 mb-4">Connect Google Drive to scan your tax document folders.</div>
+    <div class="card" style="text-align:center;padding:48px">
+      <div style="color:#6b7280;margin-bottom:16px;font-size:14px">Connect Google Drive to scan your tax document folders.</div>
       <button class="btn btn-primary" onclick="connectDrive()">Connect Google Drive</button>
     </div>` : `
-    <div class="flex items-center justify-between card bg-green-50 border-green-200">
-      <span class="text-green-800 text-sm font-medium">✓ Connected to Google Drive</span>
-      <div class="flex gap-2">
-        <button class="btn btn-primary text-xs" onclick="runDriveScan()">Scan Tax Year ${state.year}</button>
-        <button class="btn btn-ghost text-xs" onclick="state.driveToken=null;render()">Disconnect</button>
+    <div class="card" style="background:#f0fdf4;border-color:#bbf7d0;display:flex;justify-content:space-between;align-items:center">
+      <span style="color:#15803d;font-weight:500;font-size:13px">✓ Connected to Google Drive</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="runScan()">Scan ${S.year} Taxes</button>
+        <button class="btn btn-ghost" onclick="S.driveToken=null;render()">Disconnect</button>
       </div>
     </div>`}
 
-    ${state.driveFiles.length > 0 ? renderDriveResults() : `
-    <div class="card border-dashed border-2 border-gray-200 text-center py-10 text-gray-400">
-      ${connected ? 'Click "Scan Tax Year" to check document inventory.' : 'Connect Drive to scan.'}
+    ${S.driveFiles.length>0 ? renderScanResults() : `
+    <div class="card" style="border-style:dashed;text-align:center;padding:48px;color:#9ca3af">
+      ${connected ? `Click "Scan ${S.year} Taxes" to check document inventory.` : 'Connect Drive to scan.'}
     </div>`}
   </div>`;
 }
 
-function renderDriveResults() {
-  const yr = state.year;
-  const files = state.driveFiles;
-
-  return `
-  <div class="card">
-    <h2 class="font-semibold text-gray-900 mb-3">Document Inventory — ${yr} Taxes</h2>
-    <p class="text-xs text-gray-500 mb-4">${files.length} files found in Drive folder.</p>
-    ${MEMBERS.filter(m => m.active_from <= yr).map(m => {
-      const expected = EXPECTED_DOCS[m.id] || [];
-      return `
-      <div class="mb-4">
-        <h3 class="text-sm font-semibold text-gray-700 mb-2">${m.label}</h3>
-        <div class="space-y-1">
-          ${expected.map(doc => {
-            const found = files.find(f => doc.keywords.some(k => f.name.toLowerCase().includes(k.toLowerCase())));
-            return `
-            <div class="flex items-center gap-3 text-sm p-2 rounded-lg ${found ? 'bg-green-50' : 'bg-red-50'}">
-              <span>${found ? '✅' : '❌'}</span>
-              <span class="${found ? 'text-green-800' : 'text-red-700'} font-medium">${doc.label}</span>
-              ${found ? `<span class="text-green-600 text-xs ml-auto">${found.name}</span>` : `<span class="text-red-500 text-xs ml-auto">Not found</span>`}
+function renderScanResults() {
+  return `<div class="card">
+    <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:4px">Document Inventory — ${S.year} Taxes</div>
+    <div style="font-size:12px;color:#9ca3af;margin-bottom:16px">${S.driveFiles.length} files found in Drive folder</div>
+    ${MEMBERS.filter(m=>m.active_from<=S.year).map(m => {
+      const docs = EXPECTED_DOCS[m.id]||[];
+      return `<div style="margin-bottom:16px">
+        <div style="font-weight:600;font-size:13px;color:#374151;margin-bottom:6px">${m.label}</div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          ${docs.map(doc => {
+            const found = S.driveFiles.find(f => doc.kw.some(k => f.name.toLowerCase().includes(k.toLowerCase())));
+            return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;background:${found?'#f0fdf4':'#fff5f5'}">
+              <span>${found?'✅':'❌'}</span>
+              <span style="font-size:13px;font-weight:500;color:${found?'#15803d':'#991b1b'}">${doc.label}</span>
+              <span style="font-size:11px;color:${found?'#22c55e':'#f87171'};margin-left:auto">${found?found.name:'Not found'}</span>
             </div>`;
           }).join('')}
         </div>
@@ -794,177 +697,124 @@ function renderDriveResults() {
 }
 
 async function connectDrive() {
-  if (!state.gClientId) { alert('Enter Google Client ID in Settings first.'); return; }
-  const client = google.accounts.oauth2.initTokenClient({
-    client_id: state.gClientId,
+  if (!S.gClientId) { alert('Enter Google Client ID in Settings first.'); return; }
+  google.accounts.oauth2.initTokenClient({
+    client_id: S.gClientId,
     scope: 'https://www.googleapis.com/auth/drive.readonly',
-    callback: (resp) => {
-      if (resp.error) { alert('Drive auth failed: ' + resp.error); return; }
-      state.driveToken = resp.access_token;
-      render();
-    }
-  });
-  client.requestAccessToken();
+    callback: r => { if (!r.error) { S.driveToken=r.access_token; render(); } else alert('Auth failed: '+r.error); }
+  }).requestAccessToken();
 }
 
-async function runDriveScan() {
-  if (!state.driveToken) return;
-  const yr = state.year;
-  // Find the year folder — try a few naming patterns
-  const patterns = [`${yr} Taxes`, `${yr} taxes`];
-  let folderId = null;
-
-  for (const p of patterns) {
-    try {
-      const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=name+contains+'${yr}+Taxes'+and+mimeType='application/vnd.google-apps.folder'&fields=files(id,name)`, {
-        headers: { Authorization: 'Bearer ' + state.driveToken }
-      });
-      const data = await r.json();
-      if (data.files && data.files.length > 0) { folderId = data.files[0].id; break; }
-    } catch {}
-  }
-
-  if (!folderId) {
-    state.driveFiles = [];
-    alert(`No folder found for "${yr} Taxes" in your Drive.`);
-    render(); return;
-  }
-
-  // List all files recursively under the year folder
+async function runScan() {
+  if (!S.driveToken) return;
   try {
-    const r = await fetch(`https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType,parents)&pageSize=100`, {
-      headers: { Authorization: 'Bearer ' + state.driveToken }
-    });
-    const data = await r.json();
-    state.driveFiles = data.files || [];
-  } catch (e) {
-    alert('Error scanning Drive: ' + e.message);
-  }
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=name+contains+'${S.year}'+and+mimeType%3D'application%2Fvnd.google-apps.folder'&fields=files(id,name)`,
+      { headers:{Authorization:'Bearer '+S.driveToken} });
+    const d = await r.json();
+    const folder = d.files?.[0];
+    if (!folder) { alert(`Folder for ${S.year} not found.`); return; }
+    const r2 = await fetch(`https://www.googleapis.com/drive/v3/files?q='${folder.id}'+in+parents&fields=files(id,name,mimeType)&pageSize=200`,
+      { headers:{Authorization:'Bearer '+S.driveToken} });
+    const d2 = await r2.json();
+    S.driveFiles = d2.files||[];
+  } catch(e) { alert('Scan error: '+e.message); }
   render();
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 function renderSettings() {
   return `
-  <div class="space-y-5 max-w-2xl">
-    <h1 class="text-2xl font-bold text-gray-900">Settings</h1>
+  <div style="display:flex;flex-direction:column;gap:16px;max-width:640px">
+    <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0">Settings</h1>
 
-    <!-- Google OAuth -->
     <div class="card">
-      <h2 class="font-semibold text-gray-900 mb-3">Google OAuth</h2>
-      <label class="block text-sm text-gray-700 mb-1">Google Client ID (for Drive scan)</label>
-      <input type="text" id="clientIdInput" value="${state.gClientId}"
-        placeholder="xxxx.apps.googleusercontent.com"
-        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-      <p class="text-xs text-gray-500 mt-1">Same OAuth client as tax-agent. Stored in localStorage only.</p>
-      <button class="btn btn-primary mt-3 text-sm" onclick="saveClientId()">Save</button>
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:10px">Google OAuth — Drive Scan</div>
+      <label style="font-size:13px;color:#374151;display:block;margin-bottom:4px">Google Client ID</label>
+      <input type="text" id="cidInput" value="${S.gClientId}" placeholder="xxxx.apps.googleusercontent.com">
+      <p style="font-size:12px;color:#9ca3af;margin:6px 0 10px">Same OAuth client as tax-agent. Stored in localStorage only — never sent anywhere.</p>
+      <button class="btn btn-primary" onclick="saveCid()">Save</button>
     </div>
 
-    <!-- Family structure -->
     <div class="card">
-      <h2 class="font-semibold text-gray-900 mb-3">Family & Entities</h2>
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:12px">Family & Entities</div>
       <table>
-        <thead><tr><th>Name</th><th>Type</th><th>Active From</th><th>Notes</th></tr></thead>
+        <thead><tr><th>Name</th><th>Type</th><th>Obligations From</th><th>Notes</th></tr></thead>
         <tbody>
-          ${MEMBERS.map(m => `
-          <tr>
-            <td class="font-medium">${m.label}</td>
-            <td class="capitalize text-gray-600">${m.type}</td>
-            <td class="text-gray-600">${m.active_from}</td>
-            <td class="text-xs text-gray-500">${m.subtitle}</td>
+          ${MEMBERS.map(m=>`<tr>
+            <td style="font-weight:600">${m.label}</td>
+            <td style="text-transform:capitalize;color:#6b7280">${m.type}</td>
+            <td>${m.active_from}</td>
+            <td style="font-size:12px;color:#9ca3af">${m.subtitle}</td>
           </tr>`).join('')}
         </tbody>
       </table>
     </div>
 
-    <!-- Trust beneficiaries -->
     <div class="card">
-      <h2 class="font-semibold text-gray-900 mb-3">Trust Beneficiary Percentages</h2>
-      <div class="grid grid-cols-2 gap-4">
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:12px">Trust Beneficiary Percentages</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+        ${[
+          ['Salar Holdings Trust', [['Chhaya Ayaz','50%'],['Sakina Ayaz','25%'],['Aliza Ayaz','25%']], 'On Chhaya\'s death: Sakina 50%, Aliza 50%'],
+          ['Mariam Ayaz Trust',    [['Jawad Ayaz','50%'],['Chhaya Ayaz','25%'],['Sakina Ayaz','12.5%'],['Aliza Ayaz','12.5%']], 'On Jawad\'s death: Chhaya 50%, Sakina 25%, Aliza 25%']
+        ].map(([title,rows,note]) => `
         <div>
-          <h3 class="text-sm font-semibold text-gray-700 mb-2">Salar Holdings Trust</h3>
-          <div class="space-y-1 text-sm">
-            <div class="flex justify-between"><span>Chhaya Ayaz</span><span class="font-medium">50%</span></div>
-            <div class="flex justify-between"><span>Sakina Ayaz</span><span class="font-medium">25%</span></div>
-            <div class="flex justify-between"><span>Aliza Ayaz</span><span class="font-medium">25%</span></div>
-          </div>
-          <p class="text-xs text-gray-400 mt-2">On Chhaya's death: Sakina 50%, Aliza 50%</p>
-        </div>
-        <div>
-          <h3 class="text-sm font-semibold text-gray-700 mb-2">Mariam Ayaz Trust</h3>
-          <div class="space-y-1 text-sm">
-            <div class="flex justify-between"><span>Jawad Ayaz</span><span class="font-medium">50%</span></div>
-            <div class="flex justify-between"><span>Chhaya Ayaz</span><span class="font-medium">25%</span></div>
-            <div class="flex justify-between"><span>Sakina Ayaz</span><span class="font-medium">12.5%</span></div>
-            <div class="flex justify-between"><span>Aliza Ayaz</span><span class="font-medium">12.5%</span></div>
-          </div>
-          <p class="text-xs text-gray-400 mt-2">On Jawad's death: Chhaya 50%, Sakina 25%, Aliza 25%</p>
-        </div>
+          <div style="font-weight:600;font-size:13px;color:#374151;margin-bottom:6px">${title}</div>
+          ${rows.map(([n,p])=>`
+          <div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0;border-bottom:1px solid #f3f4f6">
+            <span>${n}</span><span style="font-weight:600">${p}</span>
+          </div>`).join('')}
+          <div style="font-size:11px;color:#9ca3af;margin-top:5px">${note}</div>
+        </div>`).join('')}
       </div>
     </div>
 
-    <!-- Filing deadlines reference -->
     <div class="card">
-      <h2 class="font-semibold text-gray-900 mb-3">Filing Deadlines Reference</h2>
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:10px">Filing Deadlines Reference</div>
       <table>
-        <thead><tr><th>Return</th><th>Normal Due</th><th>Extension</th></tr></thead>
+        <thead><tr><th>Return</th><th>Normal</th><th>Extension</th></tr></thead>
         <tbody>
-          ${[
-            ['Form 1040 (US individual)', 'Apr 15', 'Oct 15'],
-            ['FinCEN 114 (FBAR)', 'Apr 15', 'Oct 15 (auto)'],
-            ['Form 709 (gift tax)', 'Apr 15', 'Oct 15 (with 1040 ext)'],
-            ['Form 1041 (trust)', 'Apr 15', 'Sep 30'],
-            ['Form 3520', 'Apr 15', 'Oct 15'],
-            ['India ITR (individual)', 'Jul 31', 'Oct 31'],
-            ['India ITR (audit required)', 'Oct 31', 'Nov 30'],
-            ['India Advance Tax Q1', 'Jun 15', '—'],
-            ['India Advance Tax Q2', 'Sep 15', '—'],
-            ['India Advance Tax Q3', 'Dec 15', '—'],
-            ['India Advance Tax Q4', 'Mar 15', '—'],
-          ].map(([r,d,e]) => `<tr><td>${r}</td><td class="text-gray-700">${d}</td><td class="text-gray-500">${e}</td></tr>`).join('')}
+          ${[['Form 1040 (US individual)','Apr 15','Oct 15'],['FinCEN 114 (FBAR)','Apr 15','Oct 15 (auto)'],
+             ['Form 709 (gift tax)','Apr 15','Oct 15 (with 1040 ext)'],['Form 1041 (trust)','Apr 15','Sep 30'],
+             ['Form 3520','Apr 15','Oct 15'],['India ITR (individual)','Jul 31','Oct 31'],
+             ['India ITR (audit)','Oct 31','Nov 30'],['India Advance Tax Q1','Jun 15','—'],
+             ['India Advance Tax Q2','Sep 15','—'],['India Advance Tax Q3','Dec 15','—'],
+             ['India Advance Tax Q4','Mar 15','—']
+          ].map(([r,d,e])=>`<tr><td>${r}</td><td style="font-weight:500">${d}</td><td style="color:#6b7280">${e}</td></tr>`).join('')}
         </tbody>
       </table>
     </div>
 
-    <!-- Reset -->
-    <div class="card bg-red-50 border-red-200">
-      <h2 class="font-semibold text-red-800 mb-2">Reset Status Data</h2>
-      <p class="text-sm text-red-700 mb-3">Clears all manual status overrides. Pre-seeded data will be restored.</p>
-      <button class="btn bg-red-600 text-white hover:bg-red-700 text-sm" onclick="resetStatus()">Reset All Status</button>
+    <div class="card" style="background:#fef2f2;border-color:#fecaca">
+      <div style="font-weight:600;font-size:14px;color:#991b1b;margin-bottom:6px">Reset Status Data</div>
+      <p style="font-size:13px;color:#b91c1c;margin:0 0 10px">Clears all manual status overrides and restores pre-seeded data.</p>
+      <button class="btn btn-danger" onclick="resetAll()">Reset All Status</button>
     </div>
   </div>`;
 }
 
-function saveClientId() {
-  state.gClientId = document.getElementById('clientIdInput').value.trim();
-  localStorage.setItem('google_client_id', state.gClientId);
+function saveCid() {
+  S.gClientId = document.getElementById('cidInput').value.trim();
+  localStorage.setItem('tp_client_id', S.gClientId);
   alert('Saved.');
 }
-function resetStatus() {
+function resetAll() {
   if (!confirm('Reset all filing status overrides?')) return;
-  localStorage.removeItem('tax_status');
-  buildSeedStatus();
-  render();
+  localStorage.removeItem('tp_status');
+  loadAll(); render();
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
-function init() {
-  // Build year select
+(function init() {
   const sel = document.getElementById('yearSelect');
   YEARS.forEach(y => {
-    const opt = document.createElement('option');
-    opt.value = y;
-    opt.textContent = y === CURRENT_YEAR ? `${y} ▸ Current` : `${y}`;
-    sel.appendChild(opt);
+    const o = document.createElement('option');
+    o.value = y; o.textContent = y + (y===CURRENT_YEAR ? ' ◂ current' : '');
+    sel.appendChild(o);
   });
-  sel.value = state.year;
-
-  loadStatus();
-  loadSettings();
+  sel.value = S.year;
+  loadAll();
   navigate('dashboard');
-}
-
-init();
+})();
 </script>
 </body>
 </html>
