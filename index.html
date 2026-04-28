@@ -237,10 +237,16 @@ const GOOGLE_CLIENT_ID = '10038665958-qgeno6r5pcs2p64njv3mcihokj6o9fp4.apps.goog
 let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:[] };
 
 // ─── PERSIST ──────────────────────────────────────────────────────────────────
-function saveStatus() { localStorage.setItem('tp_status', JSON.stringify(S.status)); }
+// Bump STATUS_VER whenever SEED_STATUS changes significantly — discards stale localStorage overrides
+const STATUS_VER = 2;
+function saveStatus() {
+  localStorage.setItem('tp_status', JSON.stringify({...S.status, _ver: STATUS_VER}));
+}
 function loadAll() {
   try {
-    const saved = JSON.parse(localStorage.getItem('tp_status') || '{}');
+    const raw = JSON.parse(localStorage.getItem('tp_status') || '{}');
+    // Discard saved data from old schema versions (would override SEED_STATUS with stale not_started values)
+    const saved = (raw._ver === STATUS_VER) ? raw : {};
     for (const yr of YEARS) {
       S.status[yr] = {};
       for (const m of MEMBERS) {
@@ -248,7 +254,6 @@ function loadAll() {
       }
     }
   } catch { YEARS.forEach(yr => { S.status[yr]={}; MEMBERS.forEach(m => { S.status[yr][m.id]={...(SEED_STATUS[yr]?.[m.id]||{})}; }); }); }
-  // client ID is hardcoded from centralized credentials.json — no user entry needed
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -722,18 +727,37 @@ function connectDrive() {
   }
 }
 
+async function driveGet(url) {
+  const r = await fetch(url, { headers:{Authorization:'Bearer '+S.driveToken} });
+  if (!r.ok) throw new Error(`Drive API ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
 async function runScan() {
   if (!S.driveToken) return;
   try {
-    const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=name+contains+'${S.year}'+and+mimeType%3D'application%2Fvnd.google-apps.folder'&fields=files(id,name)`,
-      { headers:{Authorization:'Bearer '+S.driveToken} });
-    const d = await r.json();
-    const folder = d.files?.[0];
-    if (!folder) { alert(`Folder for ${S.year} not found.`); return; }
-    const r2 = await fetch(`https://www.googleapis.com/drive/v3/files?q='${folder.id}'+in+parents&fields=files(id,name,mimeType)&pageSize=200`,
-      { headers:{Authorization:'Bearer '+S.driveToken} });
-    const d2 = await r2.json();
-    S.driveFiles = d2.files||[];
+    // 1. Find "US taxes" root folder
+    const root = await driveGet(
+      `https://www.googleapis.com/drive/v3/files?q=name='US taxes' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)&pageSize=5`
+    );
+    const usTaxesFolder = root.files?.[0];
+    if (!usTaxesFolder) { alert('"US taxes" folder not found in Drive.'); return; }
+
+    // 2. Find "{year} Taxes" subfolder inside it
+    const yearQ = encodeURIComponent(`'${usTaxesFolder.id}' in parents and name='${S.year} Taxes' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const yearRes = await driveGet(
+      `https://www.googleapis.com/drive/v3/files?q=${yearQ}&fields=files(id,name)&pageSize=5`
+    );
+    const yearFolder = yearRes.files?.[0];
+    if (!yearFolder) { alert(`"${S.year} Taxes" folder not found inside "US taxes".`); return; }
+
+    // 3. List ALL files recursively under year folder (in ancestors = all descendants)
+    const filesQ = encodeURIComponent(`'${yearFolder.id}' in ancestors and mimeType!='application/vnd.google-apps.folder' and trashed=false`);
+    const filesRes = await driveGet(
+      `https://www.googleapis.com/drive/v3/files?q=${filesQ}&fields=files(id,name,mimeType)&pageSize=500`
+    );
+    S.driveFiles = filesRes.files || [];
+    if (S.driveFiles.length === 0) alert(`No files found under "${S.year} Taxes". Check folder structure.`);
   } catch(e) { alert('Scan error: '+e.message); }
   render();
 }
