@@ -192,12 +192,13 @@ const SEED_STATUS = {
     aliza:        { us_1040_aliza:'filed',  us_fbar_aliza:'na'  },
   },
   2025: {
+    // Confirmed from Drive scan 2026-04-28
     jawad_chhaya: { us_1040:'in_progress', us_fbar:'in_progress', us_709:'na', us_8938:'na', us_3520:'na',
                     in_itr_jawad:'not_started', in_itr_chhaya:'not_started',
                     in_adv_q1:'filed', in_adv_q2:'filed', in_adv_q3:'filed', in_adv_q4:'filed' },
-    salar_trust:  { us_1041_salar:'in_progress', k1_chhaya_s:'in_progress', k1_sakina_s:'in_progress', k1_aliza_s:'in_progress' },
-    sakina:       { us_1040_sakina:'not_started', us_fbar_sakina:'na' },
-    aliza:        { us_1040_aliza:'not_started',  us_fbar_aliza:'na'  },
+    salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed', k1_sakina_s:'filed', k1_aliza_s:'filed' },
+    sakina:       { us_1040_sakina:'filed', us_fbar_sakina:'na' },
+    aliza:        { us_1040_aliza:'filed',  us_fbar_aliza:'na'  },
   },
   2026: {
     jawad_chhaya: { us_1040:'not_started', us_fbar:'not_started', us_709:'filed', us_8938:'na', us_3520:'na',
@@ -239,7 +240,7 @@ let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveTo
 
 // ─── PERSIST ──────────────────────────────────────────────────────────────────
 // Bump STATUS_VER whenever SEED_STATUS changes significantly — discards stale localStorage overrides
-const STATUS_VER = 2;
+const STATUS_VER = 3;
 function saveStatus() {
   localStorage.setItem('tp_status', JSON.stringify({...S.status, _ver: STATUS_VER}));
 }
