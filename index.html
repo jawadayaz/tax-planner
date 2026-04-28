@@ -245,7 +245,8 @@ function loadAll() {
       }
     }
   } catch { YEARS.forEach(yr => { S.status[yr]={}; MEMBERS.forEach(m => { S.status[yr][m.id]={...(SEED_STATUS[yr]?.[m.id]||{})}; }); }); }
-  S.gClientId = localStorage.getItem('tp_client_id') || '';
+  // share the same key as tax-agent so the user doesn't have to re-enter it
+  S.gClientId = localStorage.getItem('tp_client_id') || localStorage.getItem('google_client_id') || '';
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -651,11 +652,16 @@ function renderDrive() {
     </div>
 
     ${!S.gClientId ? `
-    <div class="card" style="background:#fffbeb;border-color:#fde68a">
-      <p style="color:#92400e;font-size:13px;font-weight:500">Google Client ID not configured. Go to <button style="background:none;border:none;color:#92400e;text-decoration:underline;cursor:pointer;font-size:13px" onclick="navigate('settings')">Settings</button> and enter your OAuth Client ID.</p>
+    <div class="card" style="background:#fffbeb;border-color:#fde68a;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="color:#92400e;font-size:13px;font-weight:600">Google Client ID not configured</div>
+        <div style="color:#a16207;font-size:12px;margin-top:2px">Enter your OAuth Client ID in Settings. Same client ID as tax-agent — it will be auto-loaded if already saved there.</div>
+      </div>
+      <button class="btn btn-primary" onclick="navigate('settings')" style="white-space:nowrap;margin-left:16px">Open Settings →</button>
     </div>` : !connected ? `
     <div class="card" style="text-align:center;padding:48px">
-      <div style="color:#6b7280;margin-bottom:16px;font-size:14px">Connect Google Drive to scan your tax document folders.</div>
+      <div style="color:#6b7280;margin-bottom:6px;font-size:14px">Connect Google Drive to scan your tax document folders.</div>
+      <div style="color:#9ca3af;margin-bottom:20px;font-size:12px">Client ID: ${S.gClientId.slice(0,20)}…</div>
       <button class="btn btn-primary" onclick="connectDrive()">Connect Google Drive</button>
     </div>` : `
     <div class="card" style="background:#f0fdf4;border-color:#bbf7d0;display:flex;justify-content:space-between;align-items:center">
@@ -696,13 +702,35 @@ function renderScanResults() {
   </div>`;
 }
 
-async function connectDrive() {
-  if (!S.gClientId) { alert('Enter Google Client ID in Settings first.'); return; }
-  google.accounts.oauth2.initTokenClient({
-    client_id: S.gClientId,
-    scope: 'https://www.googleapis.com/auth/drive.readonly',
-    callback: r => { if (!r.error) { S.driveToken=r.access_token; render(); } else alert('Auth failed: '+r.error); }
-  }).requestAccessToken();
+function connectDrive() {
+  if (!S.gClientId) {
+    alert('Enter your Google Client ID in Settings first.');
+    navigate('settings');
+    return;
+  }
+  if (typeof google === 'undefined' || !google.accounts?.oauth2) {
+    alert('Google Identity Services is still loading. Please wait a moment and try again.');
+    return;
+  }
+  try {
+    google.accounts.oauth2.initTokenClient({
+      client_id: S.gClientId,
+      scope: 'https://www.googleapis.com/auth/drive.readonly',
+      callback: r => {
+        if (r.error) {
+          alert('Google auth error: ' + r.error + (r.error_description ? '\n' + r.error_description : ''));
+          return;
+        }
+        S.driveToken = r.access_token;
+        render();
+      },
+      error_callback: e => {
+        alert('Auth failed: ' + (e.message || e.type || JSON.stringify(e)));
+      }
+    }).requestAccessToken({ prompt: '' });
+  } catch(e) {
+    alert('Could not start auth: ' + e.message + '\n\nCheck that your Google Client ID is correct and that ' + location.origin + ' is an authorised JavaScript origin in Google Cloud Console.');
+  }
 }
 
 async function runScan() {
@@ -795,6 +823,7 @@ function renderSettings() {
 function saveCid() {
   S.gClientId = document.getElementById('cidInput').value.trim();
   localStorage.setItem('tp_client_id', S.gClientId);
+  localStorage.setItem('google_client_id', S.gClientId); // keep in sync with tax-agent
   alert('Saved.');
 }
 function resetAll() {
