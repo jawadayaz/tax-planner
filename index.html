@@ -111,7 +111,7 @@
 const APP_VERSION = '1.01';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
-const YEARS = [2022, 2023, 2024, 2026];
+const YEARS = [2022, 2023, 2024, 2025, 2026];
 
 // ─── FAMILY DATA ──────────────────────────────────────────────────────────────
 const MEMBERS = [
@@ -234,7 +234,7 @@ const GIFTS = [
 const GOOGLE_CLIENT_ID = '10038665958-qgeno6r5pcs2p64njv3mcihokj6o9fp4.apps.googleusercontent.com';
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-let S = { year:2026, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:[] };
+let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:[] };
 
 // ─── PERSIST ──────────────────────────────────────────────────────────────────
 // Bump STATUS_VER whenever SEED_STATUS changes significantly — discards stale localStorage overrides
@@ -347,84 +347,129 @@ function render() {
 function renderDashboard() {
   const yr = S.year;
 
-  // All rows including filed, for the status table
-  const allRows = [];
+  // Build deadline rows
+  const rows = [];
   for (const m of MEMBERS) {
     if (m.active_from > yr) continue;
     for (const o of getObls(m.id, yr)) {
       const s = getStatus(yr, m.id, o.id);
-      if (s === 'na') continue;
-      const d = dueDate(o, yr);
-      const od = isOverdue(o, yr, s);
-      allRows.push({ m, o, s, d, od });
+      if (s==='filed' || s==='na') continue;
+      const d = dueDate(o,yr), ex = extDate(o,yr), od = isOverdue(o,yr,s);
+      rows.push({member:m.label, memberId:m.id, o, due:d, ext:ex, status:s, od});
     }
   }
-  allRows.sort((a, b) => {
-    // Filed at bottom, then sort by date
-    const af = a.s === 'filed' ? 1 : 0, bf = b.s === 'filed' ? 1 : 0;
-    if (af !== bf) return af - bf;
-    return a.d - b.d;
-  });
+  rows.sort((a,b) => a.due-b.due);
 
-  const filed = allRows.filter(r => r.s === 'filed').length;
-  const total  = allRows.length;
-  const overdue = allRows.filter(r => r.od).length;
+  let tFiled=0, tActive=0, tOverdue=0;
+  for (const m of MEMBERS) {
+    if (m.active_from > yr) continue;
+    const p = progress(yr, m.id);
+    tFiled += p.filed; tActive += p.active; tOverdue += p.overdue;
+  }
 
   return `
   <div style="display:flex;flex-direction:column;gap:20px">
 
-    <!-- Title + summary pills -->
-    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-      <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0">Tax Year ${yr} — Filing Status</h1>
-      <span style="background:#dcfce7;color:#15803d;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px">${filed} filed</span>
-      <span style="background:${overdue>0?'#fee2e2':'#f3f4f6'};color:${overdue>0?'#dc2626':'#6b7280'};font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px">${total-filed} pending${overdue>0?' ('+overdue+' overdue)':''}</span>
+    <!-- Title -->
+    <div>
+      <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0">Tax Year ${yr}</h1>
+      <p style="font-size:13px;color:#6b7280;margin:4px 0 0">
+        US returns due Apr 15, ${yr+1} (Oct 15 with extension) &nbsp;·&nbsp;
+        India ITR due Jul 31, ${yr+1}
+      </p>
     </div>
 
-    <!-- Full status table -->
-    <div class="card" style="padding:0;overflow:hidden">
-      <table style="width:100%;border-collapse:collapse">
-        <thead>
-          <tr style="background:#f9fafb;border-bottom:1px solid #e5e7eb">
-            <th style="padding:10px 14px;text-align:left;font-size:11.5px;color:#6b7280;font-weight:600;width:28px"></th>
-            <th style="padding:10px 14px;text-align:left;font-size:11.5px;color:#6b7280;font-weight:600">Return / Obligation</th>
-            <th style="padding:10px 14px;text-align:left;font-size:11.5px;color:#6b7280;font-weight:600">Who</th>
-            <th style="padding:10px 14px;text-align:left;font-size:11.5px;color:#6b7280;font-weight:600">Due</th>
-            <th style="padding:10px 14px;text-align:left;font-size:11.5px;color:#6b7280;font-weight:600">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${allRows.map((r, i) => {
-            const disp = r.od ? 'overdue' : r.s;
-            const bg = r.s === 'filed' ? '' : r.od ? 'background:#fff5f5' : i%2===0 ? '' : 'background:#fafafa';
-            return `<tr style="border-top:1px solid #f3f4f6;${bg}">
-              <td style="padding:9px 6px 9px 14px">${jurDot(r.o.jur)}</td>
-              <td style="padding:9px 14px;font-size:13.5px;font-weight:500;color:${r.s==='filed'?'#6b7280':'#111827'}">
-                ${r.o.label}${r.o.cond?` <span style="font-size:11px;color:#9ca3af;font-weight:400">(if applicable)</span>`:''}
-              </td>
-              <td style="padding:9px 14px;font-size:13px;color:#6b7280;white-space:nowrap">${r.m.label}</td>
-              <td style="padding:9px 14px;font-size:13px;color:${r.od?'#dc2626':'#374151'};font-weight:${r.od?'600':'400'};white-space:nowrap">${fmtDate(r.d)}</td>
-              <td style="padding:9px 14px">${statusBadge(disp)}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Cross-border reference -->
+    <!-- Stats -->
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-      <div class="card" style="background:#eef2ff;border-color:#c7d2fe">
-        <div style="font-weight:600;color:#3730a3;font-size:13px;margin-bottom:4px">🇮🇳 → 🇺🇸 Foreign Tax Credit</div>
-        <div style="font-size:12px;color:#4338ca">India taxes paid on India income → Form 1116 FTC on US 1040</div>
+      <div class="card" style="text-align:center">
+        <div style="font-size:32px;font-weight:700;color:#16a34a">${tFiled}</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:2px">Filed of ${tActive} active obligations</div>
       </div>
-      <div class="card" style="background:#fff7ed;border-color:#fed7aa">
-        <div style="font-weight:600;color:#c2410c;font-size:13px;margin-bottom:4px">🇺🇸 → 🇮🇳 Tax Credit</div>
-        <div style="font-size:12px;color:#ea580c">US taxes paid on US income → credit on India ITR-2</div>
+      <div class="card" style="text-align:center">
+        <div style="font-size:32px;font-weight:700;color:${tOverdue>0?'#dc2626':'#9ca3af'}">${tOverdue}</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:2px">Overdue</div>
       </div>
-      <div class="card" style="background:#faf5ff;border-color:#e9d5ff">
-        <div style="font-weight:600;color:#7e22ce;font-size:13px;margin-bottom:6px">Trust K-1 Flows</div>
-        <div style="font-size:12px;color:#6b21a8;line-height:1.6">
-          <b>Salar:</b> Chhaya 50%, Sakina 25%, Aliza 25%<br>
-          <b>Mariam:</b> Jawad 50%, Chhaya 25%, Sakina 12.5%, Aliza 12.5%
+      <div class="card" style="text-align:center">
+        <div style="font-size:32px;font-weight:700;color:#d97706">${rows.filter(r=>!r.od).length}</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:2px">Upcoming deadlines</div>
+      </div>
+    </div>
+
+    <!-- Member cards -->
+    <div>
+      <div style="font-size:11px;font-weight:600;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px">Family & Entities</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+        ${MEMBERS.map(m => {
+          const inactive = m.active_from > yr;
+          const {filed, active, overdue} = progress(yr, m.id);
+          const pct = active ? Math.round(filed/active*100) : 100;
+          const border = memberBorder(yr, m.id);
+          const fillColor = overdue>0 ? '#f87171' : pct===100 ? '#4ade80' : '#fbbf24';
+          return `
+          <div class="member-card ${border}" onclick="navigate('checklist','${m.id}')">
+            <div style="font-size:22px;margin-bottom:4px">${m.icon}</div>
+            <div style="font-weight:600;font-size:13px;color:#111827">${m.label}</div>
+            <div style="font-size:11px;color:#9ca3af;margin-top:2px">${m.subtitle}</div>
+            <div style="margin-top:8px;font-size:12px;color:#6b7280">
+              ${inactive ? `<span style="color:#9ca3af">Starts ${m.active_from}</span>`
+                : `${filed}/${active} filed${overdue>0?` · <span style='color:#dc2626'>${overdue} overdue</span>`:''}`}
+            </div>
+            ${!inactive ? `<div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Deadlines + Credits -->
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px">
+
+      <!-- Deadlines table -->
+      <div class="card">
+        <div style="font-weight:600;font-size:15px;color:#111827;margin-bottom:14px">Deadlines — Tax Year ${yr}</div>
+        ${rows.length===0 ? `<p style="color:#9ca3af;font-size:13px">All obligations filed or N/A ✓</p>` : `
+        <table>
+          <thead><tr>
+            <th style="width:32px"></th>
+            <th>Obligation</th>
+            <th>Who</th>
+            <th>Due</th>
+            <th>Extension</th>
+            <th>Status</th>
+          </tr></thead>
+          <tbody>
+            ${rows.slice(0,14).map(r => `
+            <tr style="${r.od?'background:#fff5f5':''}">
+              <td style="padding:9px 4px 9px 10px">${jurDot(r.o.jur)}</td>
+              <td style="font-size:13.5px;color:#111827;font-weight:500">
+                ${r.o.label}
+                ${r.o.cond ? `<span style="color:#9ca3af;font-size:11px;font-weight:400;margin-left:4px">(if applicable)</span>` : ''}
+              </td>
+              <td style="font-size:13px;color:#6b7280">${r.member}</td>
+              <td style="font-size:13px;font-weight:600;color:${r.od?'#dc2626':'#374151'};white-space:nowrap">${fmtDate(r.due)}</td>
+              <td style="font-size:13px;color:#9ca3af;white-space:nowrap">${r.ext?fmtDate(r.ext):'—'}</td>
+              <td>${statusBadge(r.od?'overdue':r.status)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`}
+      </div>
+
+      <!-- Cross-border panel -->
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="card" style="background:#eef2ff;border-color:#c7d2fe">
+          <div style="font-weight:600;color:#3730a3;font-size:13px;margin-bottom:4px">🇮🇳 → 🇺🇸 Foreign Tax Credit</div>
+          <div style="font-size:12px;color:#4338ca">India taxes paid on India income → Form 1116 FTC on US 1040</div>
+        </div>
+        <div class="card" style="background:#fff7ed;border-color:#fed7aa">
+          <div style="font-weight:600;color:#c2410c;font-size:13px;margin-bottom:4px">🇺🇸 → 🇮🇳 Tax Credit</div>
+          <div style="font-size:12px;color:#ea580c">US taxes paid on US income → credit on India ITR-2</div>
+        </div>
+        <div class="card" style="background:#faf5ff;border-color:#e9d5ff">
+          <div style="font-weight:600;color:#7e22ce;font-size:13px;margin-bottom:6px">Trust K-1 Flows</div>
+          <div style="font-size:12px;color:#6b21a8;line-height:1.6">
+            <b>Salar:</b> Chhaya 50%, Sakina 25%, Aliza 25%<br>
+            <b>Mariam:</b> Jawad 50%, Chhaya 25%, Sakina 12.5%, Aliza 12.5%<br>
+            <span style="color:#9ca3af">(Mariam India income starts 2027)</span>
+          </div>
         </div>
       </div>
     </div>
