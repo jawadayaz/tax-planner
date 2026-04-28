@@ -749,31 +749,38 @@ async function driveGet(url) {
   return r.json();
 }
 
+function driveUrl(q, fields, pageSize) {
+  const base = 'https://www.googleapis.com/drive/v3/files';
+  return `${base}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&pageSize=${pageSize||200}`;
+}
+
 async function runScan() {
   if (!S.driveToken) return;
   try {
-    // 1. Find "US taxes" root folder
-    const root = await driveGet(
-      `https://www.googleapis.com/drive/v3/files?q=name='US taxes' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)&pageSize=5`
-    );
+    // 1. Find "US taxes" root folder (search by name, not scoped — it's a top-level My Drive folder)
+    const root = await driveGet(driveUrl(
+      `name='US taxes' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      'files(id,name)', 5
+    ));
     const usTaxesFolder = root.files?.[0];
-    if (!usTaxesFolder) { alert('"US taxes" folder not found in Drive.'); return; }
+    if (!usTaxesFolder) { alert('"US taxes" folder not found in Drive. Make sure it exists in My Drive.'); return; }
 
-    // 2. Find "{year} Taxes" subfolder inside it
-    const yearQ = encodeURIComponent(`'${usTaxesFolder.id}' in parents and name='${S.year} Taxes' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-    const yearRes = await driveGet(
-      `https://www.googleapis.com/drive/v3/files?q=${yearQ}&fields=files(id,name)&pageSize=5`
-    );
+    // 2. Find "{year} Taxes" subfolder directly inside "US taxes"
+    const yearRes = await driveGet(driveUrl(
+      `'${usTaxesFolder.id}' in parents and name='${S.year} Taxes' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      'files(id,name)', 5
+    ));
     const yearFolder = yearRes.files?.[0];
     if (!yearFolder) { alert(`"${S.year} Taxes" folder not found inside "US taxes".`); return; }
 
-    // 3. List ALL files recursively under year folder (in ancestors = all descendants)
-    const filesQ = encodeURIComponent(`'${yearFolder.id}' in ancestors and mimeType!='application/vnd.google-apps.folder' and trashed=false`);
-    const filesRes = await driveGet(
-      `https://www.googleapis.com/drive/v3/files?q=${filesQ}&fields=files(id,name,mimeType)&pageSize=500`
-    );
+    // 3. List ALL files recursively under year folder
+    // Drive API: 'id' in ancestors = all descendants; `not mimeType=folder` excludes subfolders
+    const filesRes = await driveGet(driveUrl(
+      `'${yearFolder.id}' in ancestors and not mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      'files(id,name,mimeType)', 500
+    ));
     S.driveFiles = filesRes.files || [];
-    if (S.driveFiles.length === 0) alert(`No files found under "${S.year} Taxes". Check folder structure.`);
+    if (S.driveFiles.length === 0) alert(`No files found under "${S.year} Taxes". Check that taxpayer subfolders contain PDFs.`);
   } catch(e) { alert('Scan error: '+e.message); }
   render();
 }
