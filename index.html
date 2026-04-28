@@ -234,7 +234,8 @@ const GIFTS = [
 const GOOGLE_CLIENT_ID = '10038665958-qgeno6r5pcs2p64njv3mcihokj6o9fp4.apps.googleusercontent.com';
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:[] };
+// driveFiles: { jawad_chhaya: [{id,name},...], sakina: [...], ... } — keyed by member ID
+let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:{} };
 
 // ─── PERSIST ──────────────────────────────────────────────────────────────────
 // Bump STATUS_VER whenever SEED_STATUS changes significantly — discards stale localStorage overrides
@@ -641,21 +642,46 @@ function renderRegistry() {
 }
 
 // ─── DRIVE SCAN ───────────────────────────────────────────────────────────────
+// Maps Drive subfolder name patterns → member IDs
+const FOLDER_MAP = [
+  { pattern: /jawad.*chhaya|chhaya.*jawad/i, mid: 'jawad_chhaya' },
+  { pattern: /salar/i,                        mid: 'salar_trust'  },
+  { pattern: /mariam/i,                       mid: 'mariam_trust' },
+  { pattern: /sakina/i,                       mid: 'sakina'       },
+  { pattern: /aliza/i,                        mid: 'aliza'        },
+];
+
 const EXPECTED_DOCS = {
   jawad_chhaya: [
-    { label:'Form 1040 (Joint Return)',    kw:['1040','tax return','filed tax'] },
-    { label:'FinCEN 114 / FBAR',          kw:['FBAR','FinCEN','114'] },
-    { label:'Form 709 (Gift Tax)',        kw:['709','gift tax'] },
-    { label:'1099-CONS (Morgan Stanley)', kw:['1099','CONS','consolidated','MS'] },
-    { label:'K-1 from Salar Trust',      kw:['k-1','salar','K1'] },
-    { label:'India ITR — Jawad',         kw:['ITR','Jawad','income tax'] },
-    { label:'India ITR — Chhaya',        kw:['ITR','Chhaya'] },
-    { label:'India CAS (CDSL/NSDL)',     kw:['CAS','consolidated account','CDSL','NSDL'] },
+    { label:'Form 1040 (Joint Return)',    kw:['1040','tax return'] },
+    { label:'FinCEN 114 / FBAR',          kw:['fbar','fincen','114'] },
+    { label:'Form 709 (Gift Tax)',        kw:['709','gift'] },
+    { label:'1099-CONS (Morgan Stanley)', kw:['1099'] },
+    { label:'K-1 from Salar Trust',      kw:['k-1','k1','salar'] },
+    { label:'India ITR',                 kw:['itr','income tax'] },
+    { label:'India CAS (CDSL/NSDL)',     kw:['cas','cdsl','nsdl'] },
   ],
-  salar_trust:  [{ label:'Form 1041', kw:['1041','salar'] }],
-  mariam_trust: [{ label:'Form 1041 — US', kw:['1041','mariam'] }, { label:'India Trust Return', kw:['mariam','india','trust'] }],
-  sakina: [{ label:'Form 1040 (Sakina)', kw:['1040','sakina'] }, { label:'India ITR', kw:['ITR','sakina'] }],
-  aliza:  [{ label:'Form 1040 (Aliza)',  kw:['1040','aliza']  }, { label:'India ITR', kw:['ITR','aliza']  }],
+  salar_trust:  [
+    { label:'Form 1041',                 kw:['1041','tax return','filed'] },
+    { label:'1099 / Tax Package',        kw:['1099','tax package'] },
+  ],
+  mariam_trust: [
+    { label:'Form 1041',                 kw:['1041','tax return'] },
+    { label:'India Trust Return',        kw:['india','trust'] },
+  ],
+  sakina: [
+    { label:'Form 1040',                 kw:['1040','tax return'] },
+    { label:'K-1 from Salar Trust',     kw:['k-1','k1','salar'] },
+    { label:'1099 / Tax Package',        kw:['1099','tax package'] },
+    { label:'India ITR',                kw:['itr'] },
+  ],
+  aliza: [
+    { label:'Form 1040',                 kw:['1040','tax return'] },
+    { label:'K-1 from Salar Trust',     kw:['k-1','k1','salar'] },
+    { label:'1099 / Tax Package',        kw:['1099','tax package'] },
+    { label:'W-2',                       kw:['w2','w-2'] },
+    { label:'India ITR',                kw:['itr'] },
+  ],
 };
 
 function renderDrive() {
@@ -680,7 +706,7 @@ function renderDrive() {
       </div>
     </div>`}
 
-    ${S.driveFiles.length>0 ? renderScanResults() : `
+    ${Object.keys(S.driveFiles).length>0 ? renderScanResults() : `
     <div class="card" style="border-style:dashed;text-align:center;padding:48px;color:#9ca3af">
       ${connected ? `Click "Scan ${S.year} Taxes" to check document inventory.` : 'Connect Drive to scan.'}
     </div>`}
@@ -688,20 +714,26 @@ function renderDrive() {
 }
 
 function renderScanResults() {
+  const totalFiles = Object.values(S.driveFiles).reduce((n, arr) => n + arr.length, 0);
   return `<div class="card">
     <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:4px">Document Inventory — ${S.year} Taxes</div>
-    <div style="font-size:12px;color:#9ca3af;margin-bottom:16px">${S.driveFiles.length} files found in Drive folder</div>
+    <div style="font-size:12px;color:#9ca3af;margin-bottom:16px">${totalFiles} files found across ${Object.keys(S.driveFiles).length} folders</div>
     ${MEMBERS.filter(m=>m.active_from<=S.year).map(m => {
-      const docs = EXPECTED_DOCS[m.id]||[];
-      return `<div style="margin-bottom:16px">
-        <div style="font-weight:600;font-size:13px;color:#374151;margin-bottom:6px">${m.label}</div>
-        <div style="display:flex;flex-direction:column;gap:4px">
+      const docs = EXPECTED_DOCS[m.id] || [];
+      const files = S.driveFiles[m.id] || [];
+      const noFolder = files.length === 0;
+      return `<div style="margin-bottom:20px">
+        <div style="font-weight:600;font-size:13px;color:#374151;margin-bottom:6px">
+          ${m.label}
+          ${noFolder ? `<span style="font-size:11px;color:#9ca3af;font-weight:400;margin-left:6px">— no folder found</span>` : `<span style="font-size:11px;color:#9ca3af;font-weight:400;margin-left:6px">${files.length} files</span>`}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px">
           ${docs.map(doc => {
-            const found = S.driveFiles.find(f => doc.kw.some(k => f.name.toLowerCase().includes(k.toLowerCase())));
+            const found = files.find(f => doc.kw.some(k => f.name.toLowerCase().includes(k.toLowerCase())));
             return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;background:${found?'#f0fdf4':'#fff5f5'}">
-              <span>${found?'✅':'❌'}</span>
-              <span style="font-size:13px;font-weight:500;color:${found?'#15803d':'#991b1b'}">${doc.label}</span>
-              <span style="font-size:11px;color:${found?'#22c55e':'#f87171'};margin-left:auto">${found?found.name:'Not found'}</span>
+              <span style="font-size:13px">${found?'✅':'❌'}</span>
+              <span style="font-size:13px;font-weight:500;color:${found?'#15803d':'#991b1b'};flex:1">${doc.label}</span>
+              <span style="font-size:11px;color:${found?'#16a34a':'#9ca3af'};text-align:right;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${found?found.name:'Not found'}</span>
             </div>`;
           }).join('')}
         </div>
@@ -756,16 +788,17 @@ function driveUrl(q, fields, pageSize) {
 
 async function runScan() {
   if (!S.driveToken) return;
+  S.driveFiles = {};
   try {
-    // 1. Find "US taxes" root folder (search by name, not scoped — it's a top-level My Drive folder)
+    // 1. Find "US taxes" root folder
     const root = await driveGet(driveUrl(
       `name='US taxes' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
       'files(id,name)', 5
     ));
     const usTaxesFolder = root.files?.[0];
-    if (!usTaxesFolder) { alert('"US taxes" folder not found in Drive. Make sure it exists in My Drive.'); return; }
+    if (!usTaxesFolder) { alert('"US taxes" folder not found in Drive.'); return; }
 
-    // 2. Find "{year} Taxes" subfolder directly inside "US taxes"
+    // 2. Find "{year} Taxes" subfolder
     const yearRes = await driveGet(driveUrl(
       `'${usTaxesFolder.id}' in parents and name='${S.year} Taxes' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
       'files(id,name)', 5
@@ -773,15 +806,27 @@ async function runScan() {
     const yearFolder = yearRes.files?.[0];
     if (!yearFolder) { alert(`"${S.year} Taxes" folder not found inside "US taxes".`); return; }
 
-    // 3. List ALL files recursively under year folder
-    // Drive API: 'id' in ancestors = all descendants; `not mimeType=folder` excludes subfolders
-    const filesRes = await driveGet(driveUrl(
-      `'${yearFolder.id}' in ancestors and not mimeType='application/vnd.google-apps.folder' and trashed=false`,
-      'files(id,name,mimeType)', 500
+    // 3. List taxpayer subfolders directly inside year folder
+    const subRes = await driveGet(driveUrl(
+      `'${yearFolder.id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      'files(id,name)', 20
     ));
-    S.driveFiles = filesRes.files || [];
-    if (S.driveFiles.length === 0) alert(`No files found under "${S.year} Taxes". Check that taxpayer subfolders contain PDFs.`);
-  } catch(e) { alert('Scan error: '+e.message); }
+    const subfolders = subRes.files || [];
+
+    // 4. For each subfolder, map it to a member ID and list its files
+    await Promise.all(subfolders.map(async folder => {
+      const match = FOLDER_MAP.find(fm => fm.pattern.test(folder.name));
+      if (!match) return;
+      const filesRes = await driveGet(driveUrl(
+        `'${folder.id}' in parents and not mimeType='application/vnd.google-apps.folder' and trashed=false`,
+        'files(id,name)', 100
+      ));
+      S.driveFiles[match.mid] = filesRes.files || [];
+    }));
+
+    const total = Object.values(S.driveFiles).reduce((n, a) => n + a.length, 0);
+    if (total === 0) alert(`No files found under "${S.year} Taxes". Check folder structure.`);
+  } catch(e) { alert('Scan error: ' + e.message); }
   render();
 }
 
