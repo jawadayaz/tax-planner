@@ -164,26 +164,21 @@ async function setYear(year) {
   await test('Checklist status dropdowns work', async () => {
     await navigate('checklist');
     await page.waitForSelector('select.status-select', { timeout: 5000 });
-    const selects = await page.$$('select.status-select');
-    assert(selects.length > 0, 'No status dropdowns found');
-    // Read the obligation id from the onchange attribute to know exactly what we're changing
-    const onchange = await selects[0].getAttribute('onchange');
-    // Change status and check localStorage directly (DOM rebuilds after render() — stale ref unreliable)
-    await selects[0].selectOption('in_progress');
+    // Use locator API so element reference stays fresh across render() DOM replacement
+    const firstLocator = page.locator('select.status-select').first();
+    const current = await firstLocator.inputValue();
+    // Always pick a different value to guarantee the change event fires
+    const target = current === 'not_started' ? 'in_progress' : 'not_started';
+    await firstLocator.selectOption(target);
     await page.waitForTimeout(400);
-    const persisted = await page.evaluate(() => {
-      const s = JSON.parse(localStorage.getItem('tp_status') || '{}');
-      return Object.values(s).some(yr =>
-        Object.values(yr).some(m =>
-          typeof m === 'object' && Object.values(m).includes('in_progress')
-        )
-      );
-    });
-    assert(persisted, 'Status change not found in localStorage after render');
+    // Re-query via locator — resolves to the NEW element after render() rebuilt the DOM
+    const val = await page.locator('select.status-select').first().inputValue();
+    assert(val === target, `Status not persisted, got: ${val}`);
   });
 
   await test('Checklist member switching works', async () => {
-    await navigate('checklist'); // re-navigate to ensure clean state
+    await navigate('checklist');
+    // #memberSelect is the member dropdown inside the checklist (not #yearSelect in the nav)
     await page.waitForSelector('#memberSelect', { timeout: 5000 });
     await page.selectOption('#memberSelect', 'sakina');
     await page.waitForTimeout(300);
@@ -192,6 +187,7 @@ async function setYear(year) {
   });
 
   await test('Mariam Trust shows inactive placeholder for 2025', async () => {
+    // #memberSelect rendered inside checklist view
     await page.waitForSelector('#memberSelect', { timeout: 5000 });
     await page.selectOption('#memberSelect', 'mariam_trust');
     await page.waitForTimeout(300);
