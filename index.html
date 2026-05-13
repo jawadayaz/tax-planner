@@ -7,6 +7,10 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="https://apis.google.com/js/api.js" async></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #111827; }
@@ -79,6 +83,22 @@
     .jur-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; flex-shrink:0; }
     .jur-us    { background:#6366f1; }
     .jur-india { background:#f97316; }
+
+    /* ── FBAR ── */
+    .fbar-step-bar { display:flex; align-items:center; gap:0; margin-bottom:20px; }
+    .fbar-step { display:flex; align-items:center; gap:6px; padding:6px 16px; font-size:12.5px; font-weight:500; color:#9ca3af; border-radius:0; }
+    .fbar-step.active { color:#4f46e5; font-weight:600; }
+    .fbar-step.done { color:#16a34a; }
+    .fbar-step-sep { color:#d1d5db; font-size:12px; }
+    .fbar-drop { border:2px dashed #d1d5db; border-radius:10px; padding:32px; text-align:center; color:#9ca3af; cursor:pointer; transition:border-color 0.15s, background 0.15s; }
+    .fbar-drop:hover, .fbar-drop.drag-over { border-color:#6366f1; background:#f5f3ff; color:#4f46e5; }
+    .fbar-acct-row { display:grid; grid-template-columns:1fr 120px 100px 80px 80px 60px 32px; gap:6px; align-items:center; padding:8px 0; border-bottom:1px solid #f3f4f6; }
+    .fbar-acct-hdr { font-size:11px; font-weight:600; color:#9ca3af; text-transform:uppercase; letter-spacing:0.04em; }
+    .fbar-input { border:1px solid #e5e7eb; border-radius:5px; padding:4px 8px; font-size:12.5px; color:#374151; width:100%; background:#fff; }
+    .fbar-match-row { display:grid; grid-template-columns:1fr 100px 110px 110px 120px; gap:6px; align-items:center; padding:8px 0; border-bottom:1px solid #f3f4f6; }
+    .match-badge-ok  { background:#dcfce7; color:#15803d; padding:2px 7px; border-radius:4px; font-size:11.5px; font-weight:600; }
+    .match-badge-no  { background:#f3f4f6; color:#9ca3af; padding:2px 7px; border-radius:4px; font-size:11.5px; }
+    .match-badge-man { background:#fef3c7; color:#92400e; padding:2px 7px; border-radius:4px; font-size:11.5px; font-weight:600; }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -95,6 +115,7 @@
       <button class="nav-tab" onclick="navigate('checklist')">Checklists</button>
       <button class="nav-tab" onclick="navigate('registry')">Gift Registry</button>
       <button class="nav-tab" onclick="navigate('drive')">Drive Scan</button>
+      <button class="nav-tab" onclick="navigate('fbar')">FBAR</button>
       <button class="nav-tab" onclick="navigate('settings')">Settings</button>
     </div>
     <div class="year-pill">
@@ -108,7 +129,8 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.01';
+const APP_VERSION = '1.02';
+const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
 const YEARS = [2022, 2023, 2024, 2025, 2026];
@@ -236,7 +258,11 @@ const GOOGLE_CLIENT_ID = '10038665958-qgeno6r5pcs2p64njv3mcihokj6o9fp4.apps.goog
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 // driveFiles: { jawad_chhaya: [{id,name},...], sakina: [...], ... } — keyed by member ID
-let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:{} };
+let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:{},
+  fbar: { step:'setup', year:2025, filerName:'Jawad Ayaz', accounts:[], fileTexts:[], fxRate:null, matchLog:[], matchDone:false }
+};
+// File objects can't be serialised — kept in module-level var
+let fbarFiles = [];
 
 // ─── PERSIST ──────────────────────────────────────────────────────────────────
 // Bump STATUS_VER whenever SEED_STATUS changes significantly — discards stale localStorage overrides
@@ -332,7 +358,7 @@ const catLabel = c => ({returns:'Returns', payments:'Tax Payments', k1s:'K-1 Iss
 function navigate(view, mid) {
   S.view = view; if (mid) S.member = mid;
   document.querySelectorAll('.nav-tab').forEach((t,i) => {
-    t.classList.toggle('active', ['dashboard','checklist','registry','drive','settings'][i]===view);
+    t.classList.toggle('active', ['dashboard','checklist','registry','drive','fbar','settings'][i]===view);
   });
   render();
 }
@@ -341,8 +367,9 @@ function setYear(y) { S.year = y; render(); }
 // ─── RENDER ───────────────────────────────────────────────────────────────────
 function render() {
   document.getElementById('yearSelect').value = S.year;
-  const views = {dashboard:renderDashboard, checklist:renderChecklist, registry:renderRegistry, drive:renderDrive, settings:renderSettings};
+  const views = {dashboard:renderDashboard, checklist:renderChecklist, registry:renderRegistry, drive:renderDrive, fbar:renderFbar, settings:renderSettings};
   document.getElementById('main').innerHTML = (views[S.view] || renderDashboard)();
+  if (S.view === 'fbar') attachFbarListeners();
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
@@ -828,6 +855,751 @@ async function runScan() {
     if (total === 0) alert(`No files found under "${S.year} Taxes". Check folder structure.`);
   } catch(e) { alert('Scan error: ' + e.message); }
   render();
+}
+
+// ─── FBAR ─────────────────────────────────────────────────────────────────────
+// PDF.js worker path (set once when library loads)
+function initPdfWorker() {
+  if (typeof pdfjsLib !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+}
+
+async function extractTextFromFile(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.csv')) return file.text();
+  if (name.endsWith('.xls') || name.endsWith('.xlsx')) {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:'array' });
+    return wb.SheetNames.map(s => XLSX.utils.sheet_to_csv(wb.Sheets[s])).join('\n');
+  }
+  // PDF — try XFA first, then PDF.js
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+
+  async function tryDecompress(chunk) {
+    const attempts = [['deflate', chunk], ['deflate-raw', chunk]];
+    if (chunk.length > 2 && chunk[0] === 0x78) attempts.push(['deflate-raw', chunk.slice(2)]);
+    for (const [fmt, data] of attempts) {
+      try {
+        const inputStream = new ReadableStream({ start(c) { c.enqueue(data); c.close(); } });
+        const reader = inputStream.pipeThrough(new DecompressionStream(fmt)).getReader();
+        const parts = [];
+        while (true) { const { done, value } = await reader.read(); if (done) break; parts.push(value); }
+        const out = new Uint8Array(parts.reduce((a,b) => a+b.length, 0));
+        let off = 0; parts.forEach(p => { out.set(p, off); off += p.length; });
+        return new TextDecoder('utf-8', { fatal:false }).decode(out);
+      } catch(_) {}
+    }
+    return null;
+  }
+  function matchAt(arr, pos, marker) {
+    if (pos+marker.length > arr.length) return false;
+    for (let k=0; k<marker.length; k++) if (arr[pos+k]!==marker[k]) return false;
+    return true;
+  }
+  const SM1=[115,116,114,101,97,109,10], SM2=[115,116,114,101,97,109,13,10], EM=[101,110,100,115,116,114,101,97,109];
+  const chunks = [];
+  for (let i=0; i<bytes.length-10; i++) {
+    if (bytes[i]!==115) continue;
+    let skip=0;
+    if (matchAt(bytes,i,SM1)) skip=SM1.length;
+    else if (matchAt(bytes,i,SM2)) skip=SM2.length;
+    if (!skip) continue;
+    const start = i+skip;
+    let end = -1;
+    for (let j=start; j<bytes.length-9; j++) {
+      if (bytes[j]===101 && matchAt(bytes,j,EM)) { end=j; break; }
+    }
+    if (end>start) {
+      let dataEnd=end;
+      if (dataEnd>start && bytes[dataEnd-1]===10) dataEnd--;
+      if (dataEnd>start && bytes[dataEnd-1]===13) dataEnd--;
+      chunks.push(bytes.slice(start, dataEnd));
+      i = end+EM.length-1;
+    }
+  }
+  for (const chunk of chunks) {
+    const text = await tryDecompress(chunk);
+    if (text && text.includes('ffbar:BSAForm')) return text.replace(/\n>/g, '>');
+  }
+  // Standard PDF via PDF.js
+  initPdfWorker();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let text = '';
+  for (let p=1; p<=pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    let lastY = null;
+    for (const item of content.items) {
+      if (lastY!==null && Math.abs(item.transform[5]-lastY)>5) text += '\n';
+      text += item.str + ' ';
+      lastY = item.transform[5];
+    }
+    text += '\n';
+  }
+  text = text
+    .replace(/(\d{1,3}(?:,\d{2})*,\d{1,2})[ \t]+(\d{1,2})(?!\d)/g, '$1$2')
+    .replace(/(\d{1,3}(?:,\d{2})*)[ \t]+(\d{3})(?!\d)/g, '$1,$2');
+  return text;
+}
+
+function tryParseXFAAccounts(text) {
+  if (!text || !text.includes('ffbar:BSAForm')) return [];
+  const ns = 'http://www.fincen.gov/bsa/ffbar/2011-06-01';
+  const TYPE_MAP = { A:'bank', B:'brokerage', S:'brokerage', M:'mf', Z:'other', C:'other' };
+  const doc = new DOMParser().parseFromString(text, 'text/xml');
+  function xget(el, localName) {
+    const byNS = el.getElementsByTagNameNS(ns, localName);
+    if (byNS.length) return byNS[0].textContent?.trim() || '';
+    const byPfx = el.getElementsByTagName('ffbar:'+localName);
+    if (byPfx.length) return byPfx[0].textContent?.trim() || '';
+    const byBare = el.getElementsByTagName(localName);
+    if (byBare.length) return byBare[0].textContent?.trim() || '';
+    return '';
+  }
+  const accounts = [];
+  for (const tag of ['FinAcctOwnedSeparately','FinAcctOwnedJointly','FinAcctSigAuth']) {
+    const ownership = tag==='FinAcctOwnedSeparately' ? 'sole' : tag==='FinAcctOwnedJointly' ? 'joint' : 'sigauth';
+    const els = doc.getElementsByTagNameNS(ns, tag).length
+      ? doc.getElementsByTagNameNS(ns, tag) : doc.getElementsByTagName('ffbar:'+tag);
+    for (const el of els) {
+      const name = xget(el, 'FinInstName');
+      if (!name) continue;
+      const num = xget(el, 'AccntNumber');
+      const typ = xget(el, 'AccountType');
+      const maxv = parseFloat(xget(el, 'MaximumAccntValue') || '0');
+      const digits = num.replace(/\D/g,'');
+      const last4 = digits.length>=4 ? digits.slice(-4) : (digits || num.slice(-4));
+      accounts.push({
+        institution_name: name, account_number: last4 ? `****${last4}` : num || '????',
+        account_type: TYPE_MAP[typ] || 'other', ownership,
+        max_value_usd: maxv, year_end_value_usd: maxv,
+      });
+    }
+  }
+  return accounts;
+}
+
+function extractAmounts(text) {
+  const results = [];
+  const re = /(?:₹|Rs\.?\s*)?(\d{1,3}(?:,\d{2})*(?:,\d{3})|\d{4,})(?:\.\d{1,2})?(?!\d)/g;
+  for (const m of text.matchAll(re)) {
+    const n = parseFloat(m[1].replace(/,/g,''));
+    if (n >= 1000) results.push(n);
+  }
+  return results;
+}
+
+function extractLabeledAmounts(text) {
+  const lower = text.toLowerCase();
+  const labeled = [];
+  const keywords = [
+    'pre-tax nav','post-tax nav','pre tax nav','post tax nav','nav','net asset value',
+    'current value','portfolio value','market value','total value',
+    'closing balance','net balance','available balance','account balance',
+    'total amount','year end value','yearend','balance as on','value as on',
+  ];
+  for (const kw of keywords) {
+    let pos = 0;
+    while ((pos = lower.indexOf(kw, pos)) !== -1) {
+      const snippet = text.slice(pos, pos+150);
+      const re = /(\d{1,3}(?:,\d{2})*(?:,\d{3})|\d{5,})(?:\.\d{1,2})?/g;
+      for (const m of snippet.matchAll(re)) {
+        const n = parseFloat(m[1].replace(/,/g,''));
+        if (n >= 1000) labeled.push({ label:kw, value:n });
+      }
+      pos += kw.length;
+    }
+  }
+  return labeled;
+}
+
+function findAccountInText(accountName, fullText) {
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
+  const words = norm(accountName).split(' ').filter(w => w.length > 2);
+  if (!words.length) return null;
+  const lowerText = fullText.toLowerCase();
+  const WIN=700, STEP=50;
+  let bestScore=0, bestPos=0;
+  for (let i=0; i<=Math.max(0,lowerText.length-WIN); i+=STEP) {
+    const chunk = lowerText.slice(i, i+WIN);
+    const hits = words.filter(w => chunk.includes(w)).length;
+    const score = hits/words.length;
+    if (score > bestScore) { bestScore=score; bestPos=i; }
+  }
+  if (bestScore < 0.3) return null;
+  const start = Math.max(0, bestPos-100);
+  const end = Math.min(fullText.length, bestPos+WIN+400);
+  const region = fullText.slice(start, end);
+  const labeledVals = extractLabeledAmounts(region).map(l=>l.value).sort((a,b)=>b-a);
+  const allAmts = extractAmounts(region).sort((a,b)=>b-a);
+  const peakBalance = labeledVals[0] || allAmts[0] || 0;
+  let yearEndBalance = peakBalance;
+  const dec31pos = region.search(/(?:31[\s/-]?dec|december[\s/-]?31|31\/12)/i);
+  if (dec31pos !== -1) {
+    const snip = region.slice(dec31pos, dec31pos+200);
+    const found = extractAmounts(snip).sort((a,b)=>b-a);
+    if (found.length > 0) yearEndBalance = found[0];
+  }
+  return { score:bestScore, peakBalance, yearEndBalance };
+}
+
+const FBAR_TYPE_LABELS = { bank:'Bank', brokerage:'Brokerage', mf:'Mutual Fund', other:'Other' };
+const fmtUSD = n => n==null ? '—' : '$'+Math.round(n).toLocaleString();
+const fmtINR = n => n==null ? '—' : '₹'+Math.round(n).toLocaleString('en-IN');
+
+function renderFbar() {
+  const fb = S.fbar;
+  const steps = ['setup','accounts','match','export'];
+  const stepLabels = ['1 Setup','2 Accounts','3 Match','4 Export'];
+  const stepBar = `<div class="fbar-step-bar">
+    ${steps.map((s,i) => {
+      const idx = steps.indexOf(fb.step);
+      const cls = s===fb.step ? 'active' : i<idx ? 'done' : '';
+      return (i>0?'<span class="fbar-step-sep">›</span>':'') +
+        `<span class="fbar-step ${cls}">${cls==='done'?'✓ ':''}${stepLabels[i]}</span>`;
+    }).join('')}
+  </div>`;
+
+  let body = '';
+  if (fb.step === 'setup')    body = renderFbarSetup();
+  if (fb.step === 'accounts') body = renderFbarAccounts();
+  if (fb.step === 'match')    body = renderFbarMatch();
+  if (fb.step === 'export')   body = renderFbarExport();
+
+  return `
+  <div style="max-width:900px">
+    <div style="margin-bottom:16px">
+      <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0">FBAR — FinCEN Form 114</h1>
+      <p style="font-size:13px;color:#6b7280;margin:4px 0 0">Annual Foreign Bank Account Report · US persons with foreign accounts &gt; $10,000</p>
+    </div>
+    ${stepBar}
+    ${body}
+  </div>`;
+}
+
+function renderFbarSetup() {
+  const fb = S.fbar;
+  return `
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card">
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:14px">Tax Year & Filer</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px">
+        <div>
+          <label style="font-size:12px;color:#6b7280;font-weight:500;display:block;margin-bottom:4px">Tax Year</label>
+          <select id="fbarYear" class="fbar-input" style="width:auto;min-width:120px">
+            ${[2022,2023,2024,2025,2026].map(y=>`<option value="${y}" ${y===fb.year?'selected':''}>${y}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:#6b7280;font-weight:500;display:block;margin-bottom:4px">Primary Filer Name</label>
+          <input id="fbarName" type="text" class="fbar-input" value="${fb.filerName}" placeholder="e.g. Jawad Ayaz">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:6px">Prior Year FBAR PDF <span style="font-weight:400;color:#9ca3af;font-size:12px">(optional — auto-extracts account list)</span></div>
+      <div class="fbar-drop" id="fbarPriorDrop" onclick="document.getElementById('fbarPriorInput').click()">
+        <div style="font-size:20px;margin-bottom:6px">📄</div>
+        <div style="font-size:13px;font-weight:500">${fb._priorFileName || 'Drop prior year FBAR PDF here'}</div>
+        <div style="font-size:12px;margin-top:4px">${fb._priorFileName ? '(click to replace)' : 'or click to browse · XFA format from BSA e-filing'}</div>
+      </div>
+      <input type="file" id="fbarPriorInput" accept=".pdf" style="display:none">
+      ${fb._priorError ? `<div style="color:#dc2626;font-size:12px;margin-top:6px">${fb._priorError}</div>` : ''}
+      ${fb._priorMsg ? `<div style="color:#16a34a;font-size:12px;margin-top:6px">${fb._priorMsg}</div>` : ''}
+    </div>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-primary" id="fbarSetupNext">Next: Accounts →</button>
+    </div>
+  </div>`;
+}
+
+function renderFbarAccounts() {
+  const fb = S.fbar;
+  const accounts = fb.accounts;
+  return `
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-weight:600;font-size:14px;color:#374151">Foreign Accounts — ${fb.year}</div>
+        <button class="btn btn-ghost" style="font-size:12px" id="fbarAddAcct">+ Add Account</button>
+      </div>
+      ${accounts.length === 0 ? `
+        <div style="text-align:center;padding:32px;color:#9ca3af;font-size:13px">
+          No accounts yet. Add manually or go back and upload a prior FBAR PDF.
+        </div>` : `
+      <div style="margin-bottom:8px">
+        <div class="fbar-acct-row" style="padding-bottom:6px">
+          <span class="fbar-acct-hdr">Institution</span>
+          <span class="fbar-acct-hdr">Acct #</span>
+          <span class="fbar-acct-hdr">Type</span>
+          <span class="fbar-acct-hdr">Ownership</span>
+          <span class="fbar-acct-hdr">Prior Max</span>
+          <span class="fbar-acct-hdr">Include</span>
+          <span></span>
+        </div>
+        ${accounts.map((a,i) => `
+        <div class="fbar-acct-row">
+          <input type="text" class="fbar-input" data-ai="${i}" data-f="name" value="${a.name}" placeholder="Institution name">
+          <input type="text" class="fbar-input" data-ai="${i}" data-f="number" value="${a.number||''}" placeholder="****1234" style="font-family:monospace;font-size:12px">
+          <select class="fbar-input" data-ai="${i}" data-f="type">
+            ${['bank','brokerage','mf','other'].map(t=>`<option value="${t}" ${t===a.type?'selected':''}>${FBAR_TYPE_LABELS[t]}</option>`).join('')}
+          </select>
+          <select class="fbar-input" data-ai="${i}" data-f="ownership">
+            ${[['sole','Sole'],['joint','Joint'],['sigauth','Sig Auth']].map(([v,l])=>`<option value="${v}" ${v===a.ownership?'selected':''}>${l}</option>`).join('')}
+          </select>
+          <input type="text" class="fbar-input" data-ai="${i}" data-f="priorMax" value="${a.priorMax!=null?Math.round(a.priorMax):''}" placeholder="USD">
+          <input type="checkbox" ${a.include?'checked':''} data-ai="${i}" data-f="include" style="width:auto;cursor:pointer">
+          <button style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;padding:0" data-del="${i}">×</button>
+        </div>`).join('')}
+      </div>`}
+    </div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" id="fbarAcctBack">← Back</button>
+      <button class="btn btn-primary" id="fbarAcctNext" ${accounts.length===0?'disabled':''}>Next: Match →</button>
+    </div>
+  </div>`;
+}
+
+function renderFbarMatch() {
+  const fb = S.fbar;
+  const fileList = fbarFiles.map(f => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f9fafb;border-radius:6px;margin-bottom:4px">
+      <span style="font-size:13px">📄</span>
+      <span style="font-size:13px;flex:1;color:#374151">${f.name}</span>
+      <button style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:14px" data-rmfile="${f.name}">×</button>
+    </div>`).join('');
+
+  const included = fb.accounts.filter(a=>a.include);
+  const matchRows = fb.matchDone ? included.map(a => {
+    const badge = a.matchStatus==='matched' ? `<span class="match-badge-ok">✓ matched</span>`
+                : a.matchStatus==='manual'  ? `<span class="match-badge-man">manual</span>`
+                : `<span class="match-badge-no">pending</span>`;
+    const rate = fb.fxRate || 84;
+    const maxInr = a.newMax!=null ? fmtINR(Math.round(a.newMax*rate)) : '—';
+    return `
+    <div class="fbar-match-row">
+      <span style="font-size:13px;font-weight:500;color:#111827">${a.name}</span>
+      ${badge}
+      <span style="font-size:12px;color:#374151;text-align:right">${fmtUSD(a.newMax)}</span>
+      <input type="text" class="fbar-input match-override" data-mid="${a.id}" value="${a.newMax!=null?Math.round(a.newMax):''}" placeholder="USD" style="text-align:right;width:90px">
+      <span style="font-size:11px;color:#9ca3af">${a.matchFile||'—'}</span>
+    </div>`;
+  }).join('') : '';
+
+  const logHtml = fb.matchLog.length ? `
+    <div style="background:#1e1e1e;color:#d4d4d4;padding:12px 14px;border-radius:8px;font-family:monospace;font-size:12px;max-height:200px;overflow-y:auto;margin-top:12px;white-space:pre-wrap">${fb.matchLog.join('\n')}</div>` : '';
+
+  return `
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card">
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:10px">
+        Upload Statement Files
+        <span style="font-weight:400;color:#9ca3af;font-size:12px;margin-left:6px">PDF · XLS · XLSX · CSV</span>
+      </div>
+      <div class="fbar-drop" id="fbarStmtDrop" onclick="document.getElementById('fbarStmtInput').click()">
+        <div style="font-size:18px;margin-bottom:4px">📂</div>
+        <div style="font-size:13px;font-weight:500">Drop statement files here or click to browse</div>
+        <div style="font-size:12px;margin-top:3px">Year-end bank/brokerage/MF statements for ${fb.year}</div>
+      </div>
+      <input type="file" id="fbarStmtInput" accept=".pdf,.xls,.xlsx,.csv" multiple style="display:none">
+      ${fileList ? `<div style="margin-top:10px">${fileList}</div>` : ''}
+    </div>
+
+    ${fb.fxRate ? `
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;font-size:13px;color:#15803d">
+      Exchange rate: ₹${fb.fxRate.toFixed(2)} / $1 (Dec 31, ${fb.year})
+    </div>` : ''}
+
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="btn btn-ghost" id="fbarMatchBack">← Accounts</button>
+      <button class="btn btn-primary" id="fbarRunMatch" ${fbarFiles.length===0?'disabled':''}>Run Match</button>
+      ${fb.matchDone && included.some(a=>a.newMax!=null) ? `<button class="btn btn-ghost" id="fbarMatchNext">Export →</button>` : ''}
+    </div>
+
+    ${logHtml}
+
+    ${fb.matchDone && matchRows ? `
+    <div class="card">
+      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:10px">Match Results — override values if needed</div>
+      <div style="margin-bottom:8px">
+        <div class="fbar-match-row" style="padding-bottom:6px">
+          <span class="fbar-acct-hdr">Institution</span>
+          <span class="fbar-acct-hdr">Status</span>
+          <span class="fbar-acct-hdr" style="text-align:right">Extracted (USD)</span>
+          <span class="fbar-acct-hdr" style="text-align:right">Override (USD)</span>
+          <span class="fbar-acct-hdr">File</span>
+        </div>
+        ${matchRows}
+      </div>
+    </div>` : ''}
+  </div>`;
+}
+
+function renderFbarExport() {
+  const fb = S.fbar;
+  const included = fb.accounts.filter(a=>a.include);
+  const totalMax = included.reduce((s,a)=>(s+(a.newMax||0)),0);
+  const totalYE  = included.reduce((s,a)=>(s+(a.newYearEnd||a.newMax||0)),0);
+  const noValues = included.filter(a=>a.newMax==null).length;
+  const rate = fb.fxRate || 84;
+
+  return `
+  <div style="display:flex;flex-direction:column;gap:16px">
+    ${noValues > 0 ? `
+    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;font-size:13px;color:#991b1b">
+      ⚠ ${noValues} account${noValues>1?'s have':' has'} no current-year values — go back to Match to fill them in.
+    </div>` : ''}
+
+    <div class="card">
+      <div style="font-weight:600;font-size:15px;color:#111827;margin-bottom:14px">FBAR Summary — ${fb.year}</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+        <div style="background:#f9fafb;border-radius:8px;padding:12px">
+          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.04em">Accounts Reported</div>
+          <div style="font-size:24px;font-weight:700;color:#111827;margin-top:4px">${included.length}</div>
+        </div>
+        <div style="background:#f9fafb;border-radius:8px;padding:12px">
+          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.04em">Total Maximum Value</div>
+          <div style="font-size:24px;font-weight:700;color:#111827;margin-top:4px">${fmtUSD(totalMax)}</div>
+        </div>
+        <div style="background:#f9fafb;border-radius:8px;padding:12px">
+          <div style="font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.04em">Exchange Rate</div>
+          <div style="font-size:20px;font-weight:700;color:#111827;margin-top:4px">₹${rate.toFixed(2)}</div>
+          <div style="font-size:11px;color:#9ca3af">per USD · Dec 31, ${fb.year}</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:#6b7280;margin-bottom:10px">Filer: ${fb.filerName || '—'}</div>
+
+      <table style="margin-bottom:16px">
+        <thead><tr>
+          <th>#</th><th>Institution</th><th>Acct #</th><th>Type</th>
+          <th style="text-align:right">Max (USD)</th><th style="text-align:right">Year-End (USD)</th>
+        </tr></thead>
+        <tbody>
+          ${included.map((a,i) => `
+          <tr>
+            <td style="color:#9ca3af">${i+1}</td>
+            <td style="font-weight:500">${a.name}</td>
+            <td style="font-family:monospace;font-size:12px;color:#6b7280">${a.number||'—'}</td>
+            <td>${FBAR_TYPE_LABELS[a.type]||a.type}</td>
+            <td style="text-align:right;font-weight:600;color:${a.newMax==null?'#dc2626':'#111827'}">${fmtUSD(a.newMax)||'<span style=color:#dc2626>missing</span>'}</td>
+            <td style="text-align:right;color:#6b7280">${fmtUSD(a.newYearEnd||a.newMax)}</td>
+          </tr>`).join('')}
+          <tr style="border-top:2px solid #e5e7eb">
+            <td colspan="4" style="font-weight:700;color:#374151">Total</td>
+            <td style="text-align:right;font-weight:700">${fmtUSD(totalMax)}</td>
+            <td style="text-align:right;font-weight:700;color:#6b7280">${fmtUSD(totalYE)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-primary" id="fbarDownloadPDF">Download PDF Summary</button>
+        <button class="btn btn-ghost" id="fbarExportBack">← Match</button>
+        <button class="btn btn-ghost" id="fbarReset" style="margin-left:auto;color:#dc2626">Start Over</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600;font-size:13px;color:#374151;margin-bottom:8px">BSA e-Filing Steps</div>
+      <ol style="font-size:13px;color:#6b7280;margin:0;padding-left:20px;line-height:2">
+        <li>Go to <strong>bsaefiling.fincen.treas.gov</strong></li>
+        <li>Log in (create account if needed)</li>
+        <li>Select "File an FBAR" → FinCEN 114</li>
+        <li>Enter each account from the table above</li>
+        <li>Sign and submit by April 15 (auto-extended to Oct 15)</li>
+      </ol>
+    </div>
+  </div>`;
+}
+
+// Attach event listeners after render (DOM must exist)
+function attachFbarListeners() {
+  const fb = S.fbar;
+
+  // ── Setup step ──
+  if (fb.step === 'setup') {
+    document.getElementById('fbarYear')?.addEventListener('change', e => { fb.year = parseInt(e.target.value); });
+    document.getElementById('fbarName')?.addEventListener('input', e => { fb.filerName = e.target.value; });
+
+    const priorInput = document.getElementById('fbarPriorInput');
+    priorInput?.addEventListener('change', async e => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      fb._priorFileName = file.name;
+      fb._priorError = null; fb._priorMsg = null;
+      render();
+      try {
+        const text = await extractTextFromFile(file);
+        const accounts = tryParseXFAAccounts(text);
+        if (accounts.length > 0) {
+          fb.accounts = accounts.map((a,i) => ({
+            id: String(i+1), name:a.institution_name, number:a.account_number||'????',
+            type:a.account_type||'bank', ownership:a.ownership||'sole',
+            include:true, source:'fbar',
+            priorMax:a.max_value_usd||null, priorYearEnd:a.year_end_value_usd||null,
+            newMax:null, newYearEnd:null, matchFile:null, matchStatus:'pending',
+          }));
+          fb._priorMsg = `✓ Extracted ${accounts.length} account(s) from prior FBAR`;
+        } else {
+          fb._priorMsg = 'No XFA accounts found — add accounts manually on the next screen.';
+        }
+      } catch(e) { fb._priorError = 'Could not read PDF: ' + e.message; }
+      render();
+    });
+
+    const drop = document.getElementById('fbarPriorDrop');
+    drop?.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag-over'); });
+    drop?.addEventListener('dragleave', () => drop.classList.remove('drag-over'));
+    drop?.addEventListener('drop', e => {
+      e.preventDefault(); drop.classList.remove('drag-over');
+      const file = e.dataTransfer.files?.[0];
+      if (file && file.name.endsWith('.pdf')) {
+        const dt = new DataTransfer(); dt.items.add(file);
+        document.getElementById('fbarPriorInput').files = dt.files;
+        document.getElementById('fbarPriorInput').dispatchEvent(new Event('change'));
+      }
+    });
+
+    document.getElementById('fbarSetupNext')?.addEventListener('click', () => {
+      fb.year = parseInt(document.getElementById('fbarYear').value);
+      fb.filerName = document.getElementById('fbarName').value;
+      fb.step = 'accounts';
+      // Fetch FX rate
+      if (!fb.fxRate) {
+        fetch(`${FBAR_WORKER}/api/fx?year=${fb.year}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(d => { if (d?.rate) { fb.fxRate = d.rate; render(); } })
+          .catch(() => {});
+      }
+      render();
+    });
+  }
+
+  // ── Accounts step ──
+  if (fb.step === 'accounts') {
+    document.getElementById('fbarAcctBack')?.addEventListener('click', () => { fb.step='setup'; render(); });
+
+    document.getElementById('fbarAddAcct')?.addEventListener('click', () => {
+      fb.accounts.push({ id:String(Date.now()), name:'', number:'', type:'bank', ownership:'sole',
+        include:true, source:'manual', priorMax:null, priorYearEnd:null,
+        newMax:null, newYearEnd:null, matchFile:null, matchStatus:'pending' });
+      render();
+    });
+
+    document.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        fb.accounts.splice(parseInt(btn.dataset.del), 1);
+        render();
+      });
+    });
+
+    document.querySelectorAll('[data-ai]').forEach(el => {
+      const i = parseInt(el.dataset.ai), field = el.dataset.f;
+      el.addEventListener('change', () => {
+        if (!fb.accounts[i]) return;
+        if (field === 'include') fb.accounts[i][field] = el.checked;
+        else if (field === 'priorMax') fb.accounts[i][field] = el.value ? parseFloat(el.value) : null;
+        else fb.accounts[i][field] = el.value;
+      });
+      el.addEventListener('blur', () => {
+        if (!fb.accounts[i]) return;
+        if (field === 'name' || field === 'number' || field === 'priorMax') {
+          if (field === 'priorMax') fb.accounts[i][field] = el.value ? parseFloat(el.value) : null;
+          else fb.accounts[i][field] = el.value;
+          render();
+        }
+      });
+    });
+
+    document.getElementById('fbarAcctNext')?.addEventListener('click', () => { fb.step='match'; render(); });
+  }
+
+  // ── Match step ──
+  if (fb.step === 'match') {
+    document.getElementById('fbarMatchBack')?.addEventListener('click', () => { fb.step='accounts'; render(); });
+    document.getElementById('fbarMatchNext')?.addEventListener('click', () => { fb.step='export'; render(); });
+
+    const stmtInput = document.getElementById('fbarStmtInput');
+    stmtInput?.addEventListener('change', e => {
+      addFbarFiles(Array.from(e.target.files));
+      e.target.value = '';
+    });
+
+    const drop = document.getElementById('fbarStmtDrop');
+    drop?.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag-over'); });
+    drop?.addEventListener('dragleave', () => drop.classList.remove('drag-over'));
+    drop?.addEventListener('drop', e => {
+      e.preventDefault(); drop.classList.remove('drag-over');
+      addFbarFiles(Array.from(e.dataTransfer.files));
+    });
+
+    document.querySelectorAll('[data-rmfile]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        fbarFiles = fbarFiles.filter(f => f.name !== btn.dataset.rmfile);
+        render();
+      });
+    });
+
+    document.querySelectorAll('.match-override').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const mid = inp.dataset.mid;
+        const val = parseFloat(inp.value);
+        const acct = fb.accounts.find(a => a.id === mid);
+        if (acct) { acct.newMax = isNaN(val) ? null : val; acct.newYearEnd = acct.newMax; acct.matchStatus = 'manual'; }
+      });
+    });
+
+    document.getElementById('fbarRunMatch')?.addEventListener('click', () => runFbarMatch());
+  }
+
+  // ── Export step ──
+  if (fb.step === 'export') {
+    document.getElementById('fbarExportBack')?.addEventListener('click', () => { fb.step='match'; render(); });
+    document.getElementById('fbarDownloadPDF')?.addEventListener('click', () => downloadFbarPDF());
+    document.getElementById('fbarReset')?.addEventListener('click', () => {
+      if (!confirm('Reset FBAR data and start over?')) return;
+      fbarFiles = [];
+      S.fbar = { step:'setup', year:S.year, filerName:fb.filerName, accounts:[], fileTexts:[], fxRate:null, matchLog:[], matchDone:false };
+      render();
+    });
+  }
+}
+
+function addFbarFiles(newFiles) {
+  const valid = newFiles.filter(f => /\.(pdf|xls|xlsx|csv)$/i.test(f.name));
+  if (!valid.length) return;
+  const names = new Set(fbarFiles.map(f=>f.name));
+  fbarFiles = [...fbarFiles, ...valid.filter(f=>!names.has(f.name))];
+  S.fbar.matchDone = false;
+  render();
+}
+
+async function runFbarMatch() {
+  const fb = S.fbar;
+  if (!fbarFiles.length) return;
+  fb.matchLog = ['Extracting text from files…'];
+  fb.matchDone = false;
+  render();
+
+  // Fetch FX rate if needed
+  if (!fb.fxRate) {
+    try {
+      const r = await fetch(`${FBAR_WORKER}/api/fx?year=${fb.year}`);
+      if (r.ok) { const d = await r.json(); fb.fxRate = d.rate; }
+    } catch(_) {}
+    if (!fb.fxRate) fb.fxRate = 84.07; // fallback
+  }
+
+  // Extract text
+  const fileTexts = [];
+  for (const file of fbarFiles) {
+    try {
+      const text = await extractTextFromFile(file);
+      fileTexts.push({ filename:file.name, text });
+      fb.matchLog.push(`  ✓ ${file.name}  (${text.length.toLocaleString()} chars)`);
+    } catch(e) { fb.matchLog.push(`  ✗ ${file.name}: ${e.message}`); }
+    render();
+  }
+
+  if (!fileTexts.length) {
+    fb.matchLog.push('✗ Could not read any files.'); fb.matchDone = true; render(); return;
+  }
+
+  fb.matchLog.push(`\nMatching ${fb.accounts.filter(a=>a.include).length} accounts…`);
+  render();
+
+  // Local client-side matching
+  for (const acct of fb.accounts) {
+    if (!acct.include) continue;
+    let bestMax = 0, bestYE = 0, bestFile = null;
+    for (const { filename, text } of fileTexts) {
+      const result = findAccountInText(acct.name, text);
+      if (!result) continue;
+      if (result.peakBalance > bestMax) {
+        bestMax = result.peakBalance;
+        bestYE = result.yearEndBalance || result.peakBalance;
+        bestFile = filename;
+      }
+    }
+    if (bestMax > 0 && fb.fxRate) {
+      acct.newMax = Math.round(bestMax / fb.fxRate);
+      acct.newYearEnd = Math.round(bestYE / fb.fxRate);
+      acct.matchFile = bestFile;
+      acct.matchStatus = 'matched';
+      fb.matchLog.push(`  ✓ ${acct.name} — ${fmtINR(bestMax)} → ${fmtUSD(acct.newMax)}`);
+    } else {
+      acct.matchStatus = 'pending';
+      fb.matchLog.push(`  · ${acct.name} — not found`);
+    }
+  }
+
+  fb.matchLog.push('\nDone. Override any values in the table below.');
+  fb.matchDone = true;
+  render();
+}
+
+function downloadFbarPDF() {
+  const fb = S.fbar;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  let y = 18;
+  const included = fb.accounts.filter(a=>a.include);
+  const totalMax = included.reduce((s,a)=>(s+(a.newMax||0)),0);
+  const totalYE  = included.reduce((s,a)=>(s+(a.newYearEnd||a.newMax||0)),0);
+  const rate = fb.fxRate || 84;
+
+  doc.setFontSize(14); doc.setFont(undefined,'bold');
+  doc.text('FinCEN Form 114 — FBAR Reference Summary', pageW/2, y, {align:'center'});
+  y += 7;
+  doc.setFontSize(9); doc.setFont(undefined,'normal'); doc.setTextColor(100);
+  doc.text('Reference summary for BSA e-filing. Not the official FinCEN form.', pageW/2, y, {align:'center'});
+  doc.setTextColor(0); y += 8;
+
+  doc.setFontSize(10); doc.setFont(undefined,'bold');
+  doc.text('Part I — Filer Information', 14, y); y += 5;
+  doc.setFont(undefined,'normal'); doc.setFontSize(9);
+  [
+    ['Calendar year', String(fb.year)],
+    ['Filer name', fb.filerName || '—'],
+    ['Exchange rate (Dec 31)', `₹${rate.toFixed(2)} per USD`],
+    ['Accounts reported', String(included.length)],
+    ['Total maximum value (USD)', '$'+Math.round(totalMax).toLocaleString()],
+    ['Total year-end value (USD)', '$'+Math.round(totalYE).toLocaleString()],
+  ].forEach(([l,v]) => {
+    doc.setTextColor(100); doc.text(l, 14, y);
+    doc.setTextColor(0); doc.text(v, 90, y); y += 5;
+  });
+  y += 4;
+
+  doc.setFontSize(10); doc.setFont(undefined,'bold');
+  doc.text('Part V — Foreign Financial Accounts', 14, y); y += 4;
+  doc.autoTable({
+    startY: y,
+    head: [['#','Institution','Acct #','Type','Ownership','Max (USD)','Year-End (USD)']],
+    body: included.map((a,i) => [
+      i+1, a.name, a.number||'—', FBAR_TYPE_LABELS[a.type]||a.type,
+      a.ownership==='joint'?'Joint':'Sole',
+      a.newMax!=null?'$'+Math.round(a.newMax).toLocaleString():'MISSING',
+      a.newYearEnd!=null?'$'+Math.round(a.newYearEnd).toLocaleString():'MISSING',
+    ]),
+    styles: { fontSize:8, cellPadding:2 },
+    headStyles: { fillColor:[30,30,28], fontSize:8 },
+    margin: { left:14, right:14 },
+    didParseCell: d => {
+      if (d.section==='body' && (d.column.index===5||d.column.index===6))
+        if (d.cell.raw==='MISSING') d.cell.styles.textColor=[180,30,30];
+    },
+  });
+  y = doc.lastAutoTable.finalY + 8;
+  doc.setFontSize(8); doc.setTextColor(120);
+  doc.text('Family Tax Planner · jawadayaz.github.io/tax-planner · '+new Date().toLocaleDateString(), 14, y);
+  doc.save(`FBAR_${fb.year}_reference.pdf`);
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
