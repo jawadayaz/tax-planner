@@ -5,18 +5,42 @@
 
 ## Current State
 
-**Phase:** Pre-build · Planning only · Nothing deployed yet
+**Phase:** Phase 1 complete · Deployed at `https://jawadayaz.github.io/tax-planner/`
+**Version:** v1.01
+**Last deployed:** 2026-04-29
 
-No code exists. This document is the authoritative design spec from which the build will proceed.
+### What is live
+- Dashboard — all obligations per selected year with filed/not-filed status badges; pending items at top, filed at bottom
+- Year selector: 2022, 2023, 2024, 2025, 2026 (no 2025 removed — present but 2026 default)
+- Seed status data for all years (confirmed from Drive scan 2026-04-28):
+  - 2022/2023/2024: all obligations filed
+  - 2025: Sakina ✅, Aliza ✅, Salar Trust ✅ filed; Jawad & Chhaya 1040/FBAR in_progress
+  - 2026: Form 709 filed; all else not started
+- Checklists — per-taxpayer, per-year obligation table with status dropdowns (localStorage-persisted)
+- Gift Registry — all 4 Form 709s (2012, 2022, 2023, 2026) with cumulative credit ledger
+- Drive Scan — connects via Google OAuth (GIS), scans `US taxes/{year} Taxes/` per-taxpayer subfolder, matches expected documents per member
+- Settings — family/entity table, trust beneficiary percentages, Reset All Status
+- Auth: Drive OAuth token persisted in localStorage (55 min expiry); silent auto-reconnect on load
+- Playwright test suite: 32 tests, all passing (`app-deploy tax-planner test`)
 
 ---
 
 ## Change Log
 
+**2026-04-28 — Phase 1 built and deployed**
+- Initial build: dashboard, checklists, gift registry, drive scan, settings
+- Fixed Tailwind CDN @apply incompatibility → plain CSS throughout
+- Fixed Drive scan: per-subfolder scan with FOLDER_MAP → keyword matching scoped per member
+- Fixed Drive OAuth: localStorage persistence + silent GIS auto-connect on init
+- Hardcoded Google client ID from centralized credentials.json; removed manual Settings entry
+- STATUS_VER versioning to prevent stale localStorage overriding seed data
+- Seed status updated from actual Drive scan (2025: Sakina/Aliza/Salar filed)
+- Playwright test suite written; fix loop resolved all failures (32/32)
+
 **2026-04-28 — Project initiated**
 - Family tax structure documented from Jawad's requirements
-- Phases 1–5 designed
-- Integration plan with tax-agent (FBAR) noted for later merge
+- Phases 1–6 designed
+- Integration plan with tax-agent (FBAR) noted for Phase 5 merge
 
 ---
 
