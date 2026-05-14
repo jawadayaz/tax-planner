@@ -921,9 +921,30 @@ async function extractTextFromFile(file) {
     }
   }
   for (const chunk of chunks) {
+    // Try decompression (deflate / deflate-raw variants)
     const text = await tryDecompress(chunk);
     if (text && text.includes('ffbar:BSAForm')) return text.replace(/\n>/g, '>');
+    // Also try the chunk raw — some streams are stored uncompressed but stream-framed
+    const raw = new TextDecoder('utf-8', { fatal:false }).decode(chunk);
+    if (raw.includes('ffbar:BSAForm')) return raw.replace(/\n>/g, '>');
   }
+
+  // ── Uncompressed XFA fallback ─────────────────────────────────────────────
+  // Some BSA FBAR PDFs embed the XFA XML inline (not compressed).
+  // Decode the whole PDF as text and look for the marker directly.
+  const rawPdf = new TextDecoder('utf-8', { fatal:false }).decode(bytes);
+  const xfaIdx = rawPdf.indexOf('ffbar:BSAForm');
+  if (xfaIdx !== -1) {
+    // Find the outermost XML declaration or root element before the marker
+    const xmlDeclIdx = rawPdf.lastIndexOf('<?xml', xfaIdx);
+    const xdpIdx     = rawPdf.lastIndexOf('<xdp:', xfaIdx);
+    const startIdx   = xmlDeclIdx !== -1 ? xmlDeclIdx : (xdpIdx !== -1 ? xdpIdx : Math.max(0, xfaIdx - 2000));
+    // Find the closing xdp or use a generous window after the marker
+    const endTag = rawPdf.indexOf('</xdp:', xfaIdx);
+    const endIdx = endTag !== -1 ? endTag + 60 : Math.min(rawPdf.length, xfaIdx + 200000);
+    return rawPdf.slice(startIdx, endIdx).replace(/\n>/g, '>');
+  }
+
   // Standard PDF via PDF.js
   initPdfWorker();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
