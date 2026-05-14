@@ -11,6 +11,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://unpkg.com/tesseract.js@4/dist/tesseract.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #111827; }
@@ -129,7 +130,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.06';
+const APP_VERSION = '1.07';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1224,13 +1225,13 @@ function renderFbarAccounts() {
     <div class="card">
       <div style="font-weight:600;font-size:13px;color:#374151;margin-bottom:8px">
         Import from file
-        <span style="font-weight:400;color:#9ca3af;font-size:12px;margin-left:6px">PDF · XLS · XLSX · CSV</span>
+        <span style="font-weight:400;color:#9ca3af;font-size:12px;margin-left:6px">PDF · XLS · XLSX · CSV · PNG · JPG</span>
       </div>
       <div class="fbar-drop" id="fbarImportDrop" onclick="document.getElementById('fbarImportInput').click()" style="padding:18px 24px">
-        <div style="font-size:13px;font-weight:500">Drop summary file here or click to browse</div>
-        <div style="font-size:12px;margin-top:3px;color:#9ca3af">Accounts found in the file will be added to the list below</div>
+        <div style="font-size:13px;font-weight:500">Drop file or screenshot here, or click to browse</div>
+        <div style="font-size:12px;margin-top:3px;color:#9ca3af">Screenshots use OCR (first load downloads ~10 MB language data)</div>
       </div>
-      <input type="file" id="fbarImportInput" accept=".pdf,.xls,.xlsx,.csv" style="display:none">
+      <input type="file" id="fbarImportInput" accept=".pdf,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp,.gif" style="display:none">
       ${importMsg}${importErr}
     </div>
 
@@ -1627,6 +1628,28 @@ function attachFbarListeners() {
 async function importAccountsFromFile(file) {
   const fb = S.fbar;
   const name = file.name.toLowerCase();
+
+  // ── Image: OCR via Tesseract.js ─────────────────────────────────────────
+  if (/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(name)) {
+    if (typeof Tesseract === 'undefined') throw new Error('OCR library not loaded — try refreshing the page');
+    fb._importMsg = 'Starting OCR…'; render();
+    const { data: { text } } = await Tesseract.recognize(file, 'eng', {
+      logger: m => {
+        if (m.status === 'loading tesseract core') { fb._importMsg = 'Loading OCR engine…'; render(); }
+        else if (m.status === 'loading language traineddata') { fb._importMsg = 'Downloading language data (first time only)…'; render(); }
+        else if (m.status === 'recognizing text') { fb._importMsg = `Recognizing text… ${Math.round((m.progress||0)*100)}%`; render(); }
+      }
+    });
+    fb._importMsg = null;
+    const accts = parseFbarTextAccounts(text);
+    accts.forEach((a, i) => fb.accounts.push({
+      id: String(Date.now()) + i, name: a.name || '', number: a.number || '',
+      type: a.type || 'bank', ownership: 'sole', include: true, source: 'manual',
+      priorMax: a.priorMax || null, priorYearEnd: null,
+      newMax: null, newYearEnd: null, matchFile: null, matchStatus: 'pending',
+    }));
+    return accts.length;
+  }
 
   // ── XLS / XLSX / CSV: structured column import ──────────────────────────
   if (name.endsWith('.xls') || name.endsWith('.xlsx') || name.endsWith('.csv')) {
