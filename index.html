@@ -129,7 +129,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.05';
+const APP_VERSION = '1.06';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1216,8 +1216,24 @@ function renderFbarSetup() {
 function renderFbarAccounts() {
   const fb = S.fbar;
   const accounts = fb.accounts;
+  const importMsg = fb._importMsg ? `<div style="color:#16a34a;font-size:12px;margin-top:6px">${fb._importMsg}</div>` : '';
+  const importErr = fb._importErr ? `<div style="color:#dc2626;font-size:12px;margin-top:6px">${fb._importErr}</div>` : '';
   return `
   <div style="display:flex;flex-direction:column;gap:16px">
+
+    <div class="card">
+      <div style="font-weight:600;font-size:13px;color:#374151;margin-bottom:8px">
+        Import from file
+        <span style="font-weight:400;color:#9ca3af;font-size:12px;margin-left:6px">PDF · XLS · XLSX · CSV</span>
+      </div>
+      <div class="fbar-drop" id="fbarImportDrop" onclick="document.getElementById('fbarImportInput').click()" style="padding:18px 24px">
+        <div style="font-size:13px;font-weight:500">Drop summary file here or click to browse</div>
+        <div style="font-size:12px;margin-top:3px;color:#9ca3af">Accounts found in the file will be added to the list below</div>
+      </div>
+      <input type="file" id="fbarImportInput" accept=".pdf,.xls,.xlsx,.csv" style="display:none">
+      ${importMsg}${importErr}
+    </div>
+
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div style="font-weight:600;font-size:14px;color:#374151">Foreign Accounts — ${fb.year}</div>
@@ -1225,7 +1241,7 @@ function renderFbarAccounts() {
       </div>
       ${accounts.length === 0 ? `
         <div style="text-align:center;padding:32px;color:#9ca3af;font-size:13px">
-          No accounts yet. Add manually or go back and upload a prior FBAR PDF.
+          No accounts yet. Add manually or import from a file above.
         </div>` : `
       <div style="margin-bottom:8px">
         <div class="fbar-acct-row" style="padding-bottom:6px">
@@ -1238,7 +1254,7 @@ function renderFbarAccounts() {
           <span></span>
         </div>
         ${accounts.map((a,i) => `
-        <div class="fbar-acct-row">
+        <div class="fbar-acct-row" id="acct-row-${i}">
           <input type="text" class="fbar-input" data-ai="${i}" data-f="name" value="${a.name}" placeholder="Institution name">
           <input type="text" class="fbar-input" data-ai="${i}" data-f="number" value="${a.number||''}" placeholder="****1234" style="font-family:monospace;font-size:12px">
           <select class="fbar-input" data-ai="${i}" data-f="type">
@@ -1253,6 +1269,7 @@ function renderFbarAccounts() {
         </div>`).join('')}
       </div>`}
     </div>
+
     <div style="display:flex;gap:10px">
       <button class="btn btn-ghost" id="fbarAcctBack">← Back</button>
       <button class="btn btn-primary" id="fbarAcctNext" ${accounts.length===0?'disabled':''}>Next: Match →</button>
@@ -1490,11 +1507,41 @@ function attachFbarListeners() {
   if (fb.step === 'accounts') {
     document.getElementById('fbarAcctBack')?.addEventListener('click', () => { fb.step='setup'; render(); });
 
+    // Import drop zone
+    const importInput = document.getElementById('fbarImportInput');
+    importInput?.addEventListener('change', async e => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      e.target.value = '';
+      fb._importMsg = null; fb._importErr = null;
+      render();
+      try {
+        const added = await importAccountsFromFile(file);
+        if (added > 0) {
+          fb._importMsg = `✓ Added ${added} account(s) from ${file.name}`;
+        } else {
+          fb._importErr = `No accounts found in ${file.name} — add manually below`;
+        }
+      } catch(e2) { fb._importErr = 'Could not read file: ' + e2.message; }
+      render();
+    });
+    const importDrop = document.getElementById('fbarImportDrop');
+    importDrop?.addEventListener('dragover', e => { e.preventDefault(); importDrop.classList.add('drag-over'); });
+    importDrop?.addEventListener('dragleave', () => importDrop.classList.remove('drag-over'));
+    importDrop?.addEventListener('drop', e => {
+      e.preventDefault(); importDrop.classList.remove('drag-over');
+      const file = e.dataTransfer.files?.[0];
+      if (file) { const dt = new DataTransfer(); dt.items.add(file); importInput.files = dt.files; importInput.dispatchEvent(new Event('change')); }
+    });
+
     document.getElementById('fbarAddAcct')?.addEventListener('click', () => {
       fb.accounts.push({ id:String(Date.now()), name:'', number:'', type:'bank', ownership:'sole',
         include:true, source:'manual', priorMax:null, priorYearEnd:null,
         newMax:null, newYearEnd:null, matchFile:null, matchStatus:'pending' });
       render();
+      // Scroll new row into view
+      const rows = document.querySelectorAll('.fbar-acct-row[id]');
+      if (rows.length) rows[rows.length-1].scrollIntoView({ behavior:'smooth', block:'center' });
     });
 
     document.querySelectorAll('[data-del]').forEach(btn => {
@@ -1506,19 +1553,18 @@ function attachFbarListeners() {
 
     document.querySelectorAll('[data-ai]').forEach(el => {
       const i = parseInt(el.dataset.ai), field = el.dataset.f;
+      // change: update state immediately (no re-render — avoids killing DOM during click events)
       el.addEventListener('change', () => {
         if (!fb.accounts[i]) return;
         if (field === 'include') fb.accounts[i][field] = el.checked;
         else if (field === 'priorMax') fb.accounts[i][field] = el.value ? parseFloat(el.value) : null;
         else fb.accounts[i][field] = el.value;
       });
+      // blur: update state only, defer any render so pending clicks still fire
       el.addEventListener('blur', () => {
         if (!fb.accounts[i]) return;
-        if (field === 'name' || field === 'number' || field === 'priorMax') {
-          if (field === 'priorMax') fb.accounts[i][field] = el.value ? parseFloat(el.value) : null;
-          else fb.accounts[i][field] = el.value;
-          render();
-        }
+        if (field === 'priorMax') fb.accounts[i][field] = el.value ? parseFloat(el.value) : null;
+        else if (field !== 'include') fb.accounts[i][field] = el.value;
       });
     });
 
@@ -1574,6 +1620,89 @@ function attachFbarListeners() {
       render();
     });
   }
+}
+
+// Import accounts from a summary file (XLS/XLSX/CSV/PDF) into S.fbar.accounts.
+// Returns the number of accounts added.
+async function importAccountsFromFile(file) {
+  const fb = S.fbar;
+  const name = file.name.toLowerCase();
+
+  // ── XLS / XLSX / CSV: structured column import ──────────────────────────
+  if (name.endsWith('.xls') || name.endsWith('.xlsx') || name.endsWith('.csv')) {
+    let rows;
+    if (name.endsWith('.csv')) {
+      const text = await file.text();
+      rows = text.split(/\r?\n/).map(l => l.split(',').map(c => c.trim().replace(/^"|"$/g, '')));
+    } else {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+    }
+    if (rows.length < 2) return 0;
+
+    // Detect column indices from header row
+    const hdr = rows[0].map(h => String(h).toLowerCase());
+    const col = (patterns) => hdr.findIndex(h => patterns.some(p => h.includes(p)));
+    const ci = {
+      name:      col(['institution','bank','financial','name','entity']),
+      number:    col(['account no','account num','acct no','acct num','account #','acct #','number']),
+      type:      col(['type','category']),
+      ownership: col(['ownership','owner','joint']),
+      max:       col(['max','balance','value','usd','amount']),
+    };
+    if (ci.name === -1) return 0; // can't identify institution column
+
+    const TYPE_NORM = { bank:'bank', deposit:'bank', savings:'bank', checking:'bank',
+      brokerage:'brokerage', securities:'brokerage', demat:'brokerage', equity:'brokerage',
+      'mutual fund':'mf', mf:'mf', fund:'mf', other:'other' };
+    let added = 0;
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      const instName = ci.name >= 0 ? String(row[ci.name] || '').trim() : '';
+      if (!instName) continue;
+      const num     = ci.number    >= 0 ? String(row[ci.number]    || '').trim() : '';
+      const typeRaw = ci.type      >= 0 ? String(row[ci.type]      || '').toLowerCase().trim() : '';
+      const ownRaw  = ci.ownership >= 0 ? String(row[ci.ownership] || '').toLowerCase().trim() : '';
+      const maxRaw  = ci.max       >= 0 ? parseFloat(String(row[ci.max] || '').replace(/[,$₹\s]/g,'')) : null;
+      const accType = TYPE_NORM[typeRaw] || (typeRaw ? 'other' : 'bank');
+      const ownership = ownRaw.includes('joint') ? 'joint' : ownRaw.includes('sig') ? 'sigauth' : 'sole';
+      const digits = num.replace(/\D/g, '');
+      const last4  = digits.length >= 4 ? `****${digits.slice(-4)}` : (num || '');
+      fb.accounts.push({
+        id: String(Date.now()) + r, name: instName, number: last4,
+        type: accType, ownership, include: true, source: 'manual',
+        priorMax: isNaN(maxRaw) ? null : maxRaw, priorYearEnd: isNaN(maxRaw) ? null : maxRaw,
+        newMax: null, newYearEnd: null, matchFile: null, matchStatus: 'pending',
+      });
+      added++;
+    }
+    return added;
+  }
+
+  // ── PDF: use text extraction + parseFbarTextAccounts ────────────────────
+  const text = await extractTextFromFile(file);
+  // First try XFA (in case it's another FBAR PDF)
+  const xfaAccts = tryParseXFAAccounts(text);
+  if (xfaAccts.length > 0) {
+    xfaAccts.forEach((a, i) => fb.accounts.push({
+      id: String(Date.now()) + i, name: a.institution_name || '', number: a.account_number || '',
+      type: a.account_type || 'bank', ownership: a.ownership || 'sole', include: true, source: 'manual',
+      priorMax: a.max_value_usd || null, priorYearEnd: a.year_end_value_usd || null,
+      newMax: null, newYearEnd: null, matchFile: null, matchStatus: 'pending',
+    }));
+    return xfaAccts.length;
+  }
+  // Fallback: text-based parser
+  const textAccts = parseFbarTextAccounts(text);
+  textAccts.forEach((a, i) => fb.accounts.push({
+    id: String(Date.now()) + i, name: a.name || '', number: a.number || '',
+    type: a.type || 'bank', ownership: 'sole', include: true, source: 'manual',
+    priorMax: a.priorMax || null, priorYearEnd: null,
+    newMax: null, newYearEnd: null, matchFile: null, matchStatus: 'pending',
+  }));
+  return textAccts.length;
 }
 
 function addFbarFiles(newFiles) {
