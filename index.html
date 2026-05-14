@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Family Tax Planner</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://accounts.google.com/gsi/client" async></script>
-  <script src="https://apis.google.com/js/api.js" async></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -130,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.08';
+const APP_VERSION = '1.09';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -254,8 +252,9 @@ const GIFTS = [
     notes:'Aliza priority $87,351 equalization. Filed Apr 27, 2026.' },
 ];
 
-// ─── GOOGLE CLIENT ID (from centralized ~/Claude/projects/credentials.json) ──
-const GOOGLE_CLIENT_ID = '10038665958-qgeno6r5pcs2p64njv3mcihokj6o9fp4.apps.googleusercontent.com';
+// ─── GLOBAL WORKER (centralized secrets hub) ─────────────────────────────────
+const GLOBAL_WORKER_URL = 'https://global-worker.jawadayaz.workers.dev';
+const GLOBAL_WORKER_SECRET = '81bb75bce37a6d0f848df3afa7227cc9ad803b575f4887bc5b5c55d67ae561d8';
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 // driveFiles: { jawad_chhaya: [{id,name},...], sakina: [...], ... } — keyed by member ID
@@ -283,7 +282,7 @@ function loadAll() {
       }
     }
   } catch { YEARS.forEach(yr => { S.status[yr]={}; MEMBERS.forEach(m => { S.status[yr][m.id]={...(SEED_STATUS[yr]?.[m.id]||{})}; }); }); }
-  // Restore Drive token from localStorage if not expired
+  // Restore Drive token from localStorage if not expired (populated by fetchDriveToken)
   try {
     const dt = JSON.parse(localStorage.getItem('tp_drive') || '{}');
     if (dt.token && dt.exp && Date.now() < dt.exp) {
@@ -292,6 +291,8 @@ function loadAll() {
       localStorage.removeItem('tp_drive');
     }
   } catch { localStorage.removeItem('tp_drive'); }
+  // Auto-fetch a fresh Drive token in the background if none cached
+  if (!S.driveToken) fetchDriveToken();
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -721,22 +722,19 @@ function renderDrive() {
       <p style="font-size:13px;color:#6b7280;margin:4px 0 0">Scans <code>My Drive/US taxes/${S.year} Taxes/</code> and verifies expected documents.</p>
     </div>
 
-    ${!connected ? `
-    <div class="card" style="text-align:center;padding:48px">
-      <div style="color:#6b7280;margin-bottom:20px;font-size:14px">Connect Google Drive to scan your tax document folders.</div>
-      <button class="btn btn-primary" onclick="connectDrive()">Connect Google Drive</button>
-    </div>` : `
-    <div class="card" style="background:#f0fdf4;border-color:#bbf7d0;display:flex;justify-content:space-between;align-items:center">
-      <span style="color:#15803d;font-weight:500;font-size:13px">✓ Connected to Google Drive</span>
-      <div style="display:flex;gap:8px">
+    <div class="card" style="background:${connected?'#f0fdf4':'#fafafa'};border-color:${connected?'#bbf7d0':'#e5e7eb'};display:flex;justify-content:space-between;align-items:center">
+      ${connected
+        ? `<span style="color:#15803d;font-weight:500;font-size:13px">✓ Connected to Google Drive</span>`
+        : `<span style="color:#9ca3af;font-size:13px">Connecting to Google Drive…</span>`}
+      ${connected ? `<div style="display:flex;gap:8px">
         <button class="btn btn-primary" onclick="runScan()">Scan ${S.year} Taxes</button>
-        <button class="btn btn-ghost" onclick="S.driveToken=null;localStorage.removeItem('tp_drive');render()">Disconnect</button>
-      </div>
-    </div>`}
+        <button class="btn btn-ghost" onclick="S.driveToken=null;localStorage.removeItem('tp_drive');fetchDriveToken()">Refresh</button>
+      </div>` : ''}
+    </div>
 
     ${Object.keys(S.driveFiles).length>0 ? renderScanResults() : `
     <div class="card" style="border-style:dashed;text-align:center;padding:48px;color:#9ca3af">
-      ${connected ? `Click "Scan ${S.year} Taxes" to check document inventory.` : 'Connect Drive to scan.'}
+      ${connected ? `Click "Scan ${S.year} Taxes" to check document inventory.` : 'Waiting for Drive connection…'}
     </div>`}
   </div>`;
 }
@@ -770,40 +768,28 @@ function renderScanResults() {
   </div>`;
 }
 
-function connectDrive() {
-  if (typeof google === 'undefined' || !google.accounts?.oauth2) {
-    alert('Google Identity Services is still loading — please wait a moment and try again.');
-    return;
-  }
+async function fetchDriveToken() {
   try {
-    google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/drive.readonly',
-      callback: r => {
-        if (r.error) {
-          alert('Google auth error: ' + r.error + (r.error_description ? '\n' + r.error_description : ''));
-          return;
-        }
-        S.driveToken = r.access_token;
-        // Persist token for the browser session (expires_in is typically 3600s; use 55 min to be safe)
-        const exp = Date.now() + (r.expires_in ? (r.expires_in - 300) * 1000 : 55 * 60 * 1000);
-        localStorage.setItem('tp_drive', JSON.stringify({token: r.access_token, exp}));
-        render();
-      },
-      error_callback: e => {
-        alert('Auth failed: ' + (e.message || e.type || JSON.stringify(e)));
-      }
-    }).requestAccessToken({ prompt: '' });
+    const r = await fetch(GLOBAL_WORKER_URL + '/api/drive-token', {
+      headers: { Authorization: 'Bearer ' + GLOBAL_WORKER_SECRET }
+    });
+    if (!r.ok) throw new Error('global-worker returned ' + r.status);
+    const data = await r.json();
+    S.driveToken = data.access_token;
+    const exp = Date.now() + (data.expires_in ? (data.expires_in - 300) * 1000 : 55 * 60 * 1000);
+    localStorage.setItem('tp_drive', JSON.stringify({ token: data.access_token, exp }));
+    render();
   } catch(e) {
-    alert('Could not start auth: ' + e.message);
+    console.error('Drive token fetch failed:', e.message);
   }
 }
 
 async function driveGet(url) {
   const r = await fetch(url, { headers:{Authorization:'Bearer '+S.driveToken} });
   if (r.status === 401) {
-    S.driveToken = null; localStorage.removeItem('tp_drive'); render();
-    throw new Error('Drive session expired — please reconnect.');
+    S.driveToken = null; localStorage.removeItem('tp_drive');
+    fetchDriveToken();
+    throw new Error('Drive token expired — refreshing automatically, please try again in a moment.');
   }
   if (!r.ok) throw new Error(`Drive API ${r.status}: ${await r.text()}`);
   return r.json();
