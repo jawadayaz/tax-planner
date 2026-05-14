@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.11';
+const APP_VERSION = '1.12';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -269,7 +269,7 @@ const GLOBAL_WORKER_SECRET = '81bb75bce37a6d0f848df3afa7227cc9ad803b575f4887bc5b
 // ─── STATE ────────────────────────────────────────────────────────────────────
 // driveFiles: { jawad_chhaya: [{id,name},...], sakina: [...], ... } — keyed by member ID
 let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:{},
-  fbar: { filer:'jawad', step:'setup', year:2025, accounts:[], fxRate:null, matchLog:[], matchDone:false, completed:false }
+  fbar: { filer:'jawad', step:'setup', year:2025, accounts:[], fxRate:null, matchLog:[], matchDone:false, completed:false, balCurrency:'inr' }
 };
 // File objects can't be serialised — kept in module-level var
 let fbarFiles = [];
@@ -285,6 +285,7 @@ function saveFbarData() {
     all[fb.filer][fb.year] = {
       step: fb.step, accounts: fb.accounts, fxRate: fb.fxRate,
       matchLog: fb.matchLog, matchDone: fb.matchDone, completed: fb.completed || false,
+      balCurrency: fb.balCurrency || 'inr',
     };
     localStorage.setItem('tp_fbar', JSON.stringify(all));
   } catch(e) {}
@@ -297,7 +298,8 @@ function loadFbarData(filer, year) {
     if (saved) {
       return { filer, year, step: saved.step || 'setup', accounts: saved.accounts || [],
         fxRate: saved.fxRate || null, matchLog: saved.matchLog || [],
-        matchDone: saved.matchDone || false, completed: saved.completed || false };
+        matchDone: saved.matchDone || false, completed: saved.completed || false,
+        balCurrency: saved.balCurrency || 'inr' };
     }
     // Carry accounts forward from previous completed year
     const prev = all[filer]?.[year - 1];
@@ -309,7 +311,7 @@ function loadFbarData(filer, year) {
         newMax: null, newYearEnd: null, matchFile: null, matchStatus: 'pending',
       }));
       return { filer, year, step: 'setup', accounts: carried, fxRate: null, matchLog: [],
-        matchDone: false, completed: false, _carriedFrom: year - 1 };
+        matchDone: false, completed: false, _carriedFrom: year - 1, balCurrency: 'inr' };
     }
   } catch(e) {}
   return { filer, year, step: 'setup', accounts: [], fxRate: null, matchLog: [], matchDone: false, completed: false };
@@ -1191,6 +1193,27 @@ function findAccountInText(accountName, fullText) {
 }
 
 const FBAR_TYPE_LABELS = { bank:'Bank', brokerage:'Brokerage', mf:'Mutual Fund', other:'Other' };
+
+function setFbarCurrency(c) { S.fbar.balCurrency = c; saveFbarData(); render(); }
+
+function fbarCurrencyToggle(cur) {
+  return `<div style="display:inline-flex;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;font-size:12px">
+    <button onclick="setFbarCurrency('inr')" style="padding:3px 10px;border:none;cursor:pointer;background:${cur==='inr'?'#4f46e5':'#fff'};color:${cur==='inr'?'#fff':'#6b7280'};font-weight:${cur==='inr'?'600':'400'}">INR</button>
+    <button onclick="setFbarCurrency('usd')" style="padding:3px 10px;border:none;cursor:pointer;background:${cur==='usd'?'#4f46e5':'#fff'};color:${cur==='usd'?'#fff':'#6b7280'};font-weight:${cur==='usd'?'600':'400'}">USD</button>
+  </div>`;
+}
+
+// Convert stored USD value → display value in selected currency
+function toDisplay(usdVal, rate, cur) {
+  if (usdVal == null) return '';
+  return cur === 'inr' ? Math.round(usdVal * rate) : Math.round(usdVal);
+}
+// Convert user input → USD for storage
+function fromInput(raw, rate, cur) {
+  const n = parseFloat(String(raw).replace(/[,\s]/g,''));
+  if (isNaN(n)) return null;
+  return cur === 'inr' ? n / rate : n;
+}
 const fmtUSD = n => n==null ? '—' : '$'+Math.round(n).toLocaleString();
 const fmtINR = n => n==null ? '—' : '₹'+Math.round(n).toLocaleString('en-IN');
 
@@ -1311,7 +1334,10 @@ function renderFbarAccounts() {
 
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div style="font-weight:600;font-size:14px;color:#374151">Foreign Accounts — ${fb.year}</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-weight:600;font-size:14px;color:#374151">Foreign Accounts — ${fb.year}</div>
+          ${fbarCurrencyToggle(fb.balCurrency)}
+        </div>
         <button class="btn btn-ghost" style="font-size:12px" id="fbarAddAcct">+ Add Account</button>
       </div>
       ${accounts.length === 0 ? `
@@ -1324,11 +1350,14 @@ function renderFbarAccounts() {
           <span class="fbar-acct-hdr">Acct #</span>
           <span class="fbar-acct-hdr">Type</span>
           <span class="fbar-acct-hdr">Ownership</span>
-          <span class="fbar-acct-hdr">Prior Max</span>
+          <span class="fbar-acct-hdr">Prior Max (${fb.balCurrency.toUpperCase()})</span>
           <span class="fbar-acct-hdr">Include</span>
           <span></span>
         </div>
-        ${accounts.map((a,i) => `
+        ${accounts.map((a,i) => {
+          const rate = fb.fxRate || 84;
+          const dispPrior = toDisplay(a.priorMax, rate, fb.balCurrency);
+          return `
         <div class="fbar-acct-row" id="acct-row-${i}">
           <input type="text" class="fbar-input" data-ai="${i}" data-f="name" value="${a.name}" placeholder="Institution name">
           <input type="text" class="fbar-input" data-ai="${i}" data-f="number" value="${a.number||''}" placeholder="****1234" style="font-family:monospace;font-size:12px">
@@ -1338,10 +1367,10 @@ function renderFbarAccounts() {
           <select class="fbar-input" data-ai="${i}" data-f="ownership">
             ${[['sole','Sole'],['joint','Joint'],['sigauth','Sig Auth']].map(([v,l])=>`<option value="${v}" ${v===a.ownership?'selected':''}>${l}</option>`).join('')}
           </select>
-          <input type="text" class="fbar-input" data-ai="${i}" data-f="priorMax" value="${a.priorMax!=null?Math.round(a.priorMax):''}" placeholder="USD">
+          <input type="text" class="fbar-input" data-ai="${i}" data-f="priorMax" value="${dispPrior}" placeholder="${fb.balCurrency.toUpperCase()}">
           <input type="checkbox" ${a.include?'checked':''} data-ai="${i}" data-f="include" style="width:auto;cursor:pointer">
           <button style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;padding:0" data-del="${i}">×</button>
-        </div>`).join('')}
+        </div>`;}).join('')}
       </div>`}
     </div>
 
@@ -1362,18 +1391,20 @@ function renderFbarMatch() {
     </div>`).join('');
 
   const included = fb.accounts.filter(a=>a.include);
+  const rate = fb.fxRate || 84;
+  const cur = fb.balCurrency || 'inr';
+  const fmtCur = (usd) => usd == null ? '—' : cur === 'inr' ? fmtINR(Math.round(usd * rate)) : fmtUSD(usd);
   const matchRows = fb.matchDone ? included.map(a => {
     const badge = a.matchStatus==='matched' ? `<span class="match-badge-ok">✓ matched</span>`
                 : a.matchStatus==='manual'  ? `<span class="match-badge-man">manual</span>`
                 : `<span class="match-badge-no">pending</span>`;
-    const rate = fb.fxRate || 84;
-    const maxInr = a.newMax!=null ? fmtINR(Math.round(a.newMax*rate)) : '—';
+    const dispVal = toDisplay(a.newMax, rate, cur);
     return `
     <div class="fbar-match-row">
       <span style="font-size:13px;font-weight:500;color:#111827">${a.name}</span>
       ${badge}
-      <span style="font-size:12px;color:#374151;text-align:right">${fmtUSD(a.newMax)}</span>
-      <input type="text" class="fbar-input match-override" data-mid="${a.id}" value="${a.newMax!=null?Math.round(a.newMax):''}" placeholder="USD" style="text-align:right;width:90px">
+      <span style="font-size:12px;color:#374151;text-align:right">${fmtCur(a.newMax)}</span>
+      <input type="text" class="fbar-input match-override" data-mid="${a.id}" value="${dispVal}" placeholder="${cur.toUpperCase()}" style="text-align:right;width:90px">
       <span style="font-size:11px;color:#9ca3af">${a.matchFile||'—'}</span>
     </div>`;
   }).join('') : '';
@@ -1412,13 +1443,16 @@ function renderFbarMatch() {
 
     ${fb.matchDone && matchRows ? `
     <div class="card">
-      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:10px">Match Results — override values if needed</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-weight:600;font-size:14px;color:#374151">Match Results — override values if needed</div>
+        ${fbarCurrencyToggle(cur)}
+      </div>
       <div style="margin-bottom:8px">
         <div class="fbar-match-row" style="padding-bottom:6px">
           <span class="fbar-acct-hdr">Institution</span>
           <span class="fbar-acct-hdr">Status</span>
-          <span class="fbar-acct-hdr" style="text-align:right">Extracted (USD)</span>
-          <span class="fbar-acct-hdr" style="text-align:right">Override (USD)</span>
+          <span class="fbar-acct-hdr" style="text-align:right">Extracted (${cur.toUpperCase()})</span>
+          <span class="fbar-acct-hdr" style="text-align:right">Override (${cur.toUpperCase()})</span>
           <span class="fbar-acct-hdr">File</span>
         </div>
         ${matchRows}
@@ -1640,13 +1674,13 @@ function attachFbarListeners() {
       el.addEventListener('change', () => {
         if (!fb.accounts[i]) return;
         if (field === 'include') fb.accounts[i][field] = el.checked;
-        else if (field === 'priorMax') fb.accounts[i][field] = el.value ? parseFloat(el.value) : null;
+        else if (field === 'priorMax') fb.accounts[i][field] = fromInput(el.value, fb.fxRate||84, fb.balCurrency||'inr');
         else fb.accounts[i][field] = el.value;
       });
       // blur: update state + persist; defer render so pending clicks still fire
       el.addEventListener('blur', () => {
         if (!fb.accounts[i]) return;
-        if (field === 'priorMax') fb.accounts[i][field] = el.value ? parseFloat(el.value) : null;
+        if (field === 'priorMax') fb.accounts[i][field] = fromInput(el.value, fb.fxRate||84, fb.balCurrency||'inr');
         else if (field !== 'include') fb.accounts[i][field] = el.value;
         saveFbarData();
       });
@@ -1683,10 +1717,12 @@ function attachFbarListeners() {
 
     document.querySelectorAll('.match-override').forEach(inp => {
       inp.addEventListener('change', () => {
-        const mid = inp.dataset.mid;
-        const val = parseFloat(inp.value);
-        const acct = fb.accounts.find(a => a.id === mid);
-        if (acct) { acct.newMax = isNaN(val) ? null : val; acct.newYearEnd = acct.newMax; acct.matchStatus = 'manual'; }
+        const acct = fb.accounts.find(a => a.id === inp.dataset.mid);
+        if (!acct) return;
+        const usd = fromInput(inp.value, fb.fxRate||84, fb.balCurrency||'inr');
+        acct.newMax = usd; acct.newYearEnd = usd;
+        acct.matchStatus = usd != null ? 'manual' : 'pending';
+        saveFbarData();
       });
     });
 
