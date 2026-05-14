@@ -11,6 +11,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako_inflate.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #111827; }
@@ -129,7 +130,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.03';
+const APP_VERSION = '1.04';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -879,13 +880,16 @@ async function extractTextFromFile(file) {
   const bytes = new Uint8Array(buf);
 
   async function tryDecompress(chunk) {
+    // Primary: pako (pure JS zlib — handles any valid CMF byte including 0x48)
+    if (typeof pako !== 'undefined') {
+      try { return new TextDecoder('utf-8', { fatal:false }).decode(pako.inflate(chunk)); } catch(_) {}
+      // Also try raw deflate (no zlib header) via pako
+      try { return new TextDecoder('utf-8', { fatal:false }).decode(pako.inflateRaw(chunk.slice(2))); } catch(_) {}
+    }
+    // Fallback: DecompressionStream API
     const attempts = [['deflate', chunk], ['deflate-raw', chunk]];
-    // Standard zlib header (0x78 xx): strip 2-byte header and try raw deflate
     if (chunk.length > 2 && chunk[0] === 0x78) attempts.push(['deflate-raw', chunk.slice(2)]);
-    // Non-standard zlib CMF (e.g. 0x48 used by BSA FBAR EmbeddedFile streams):
-    // Valid zlib requires CM=8 (deflate) in low 4 bits and (CMF*256+FLG)%31===0
-    if (chunk.length > 2 && chunk[0] !== 0x78 && (chunk[0] & 0xF) === 8 &&
-        (chunk[0] * 256 + chunk[1]) % 31 === 0) {
+    if (chunk.length > 2 && (chunk[0] & 0xF) === 8 && (chunk[0] * 256 + chunk[1]) % 31 === 0) {
       attempts.push(['deflate-raw', chunk.slice(2)]);
     }
     for (const [fmt, data] of attempts) {
