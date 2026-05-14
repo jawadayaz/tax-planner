@@ -94,7 +94,7 @@
     .fbar-acct-row { display:grid; grid-template-columns:1fr 120px 100px 80px 80px 60px 32px; gap:6px; align-items:center; padding:8px 0; border-bottom:1px solid #f3f4f6; }
     .fbar-acct-hdr { font-size:11px; font-weight:600; color:#9ca3af; text-transform:uppercase; letter-spacing:0.04em; }
     .fbar-input { border:1px solid #e5e7eb; border-radius:5px; padding:4px 8px; font-size:12.5px; color:#374151; width:100%; background:#fff; }
-    .fbar-match-row { display:grid; grid-template-columns:1fr 100px 110px 110px 120px; gap:6px; align-items:center; padding:8px 0; border-bottom:1px solid #f3f4f6; }
+    .fbar-match-row { display:grid; grid-template-columns:1fr 100px 120px 120px 140px; gap:6px; align-items:center; padding:8px 0; border-bottom:1px solid #f3f4f6; }
     .match-badge-ok  { background:#dcfce7; color:#15803d; padding:2px 7px; border-radius:4px; font-size:11.5px; font-weight:600; }
     .match-badge-no  { background:#f3f4f6; color:#9ca3af; padding:2px 7px; border-radius:4px; font-size:11.5px; }
     .match-badge-man { background:#fef3c7; color:#92400e; padding:2px 7px; border-radius:4px; font-size:11.5px; font-weight:600; }
@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.12';
+const APP_VERSION = '1.13';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1383,6 +1383,10 @@ function renderFbarAccounts() {
 
 function renderFbarMatch() {
   const fb = S.fbar;
+  const included = fb.accounts.filter(a=>a.include);
+  const rate = fb.fxRate || 84;
+  const cur = fb.balCurrency || 'inr';
+
   const fileList = fbarFiles.map(f => `
     <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f9fafb;border-radius:6px;margin-bottom:4px">
       <span style="font-size:13px">📄</span>
@@ -1390,74 +1394,71 @@ function renderFbarMatch() {
       <button style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:14px" data-rmfile="${f.name}">×</button>
     </div>`).join('');
 
-  const included = fb.accounts.filter(a=>a.include);
-  const rate = fb.fxRate || 84;
-  const cur = fb.balCurrency || 'inr';
-  const fmtCur = (usd) => usd == null ? '—' : cur === 'inr' ? fmtINR(Math.round(usd * rate)) : fmtUSD(usd);
-  const matchRows = fb.matchDone ? included.map(a => {
+  const accountRows = included.map(a => {
     const badge = a.matchStatus==='matched' ? `<span class="match-badge-ok">✓ matched</span>`
                 : a.matchStatus==='manual'  ? `<span class="match-badge-man">manual</span>`
                 : `<span class="match-badge-no">pending</span>`;
     const dispVal = toDisplay(a.newMax, rate, cur);
+    const priorDisp = a.priorMax != null ? (cur==='inr' ? fmtINR(Math.round(a.priorMax*rate)) : fmtUSD(a.priorMax)) : '—';
     return `
     <div class="fbar-match-row">
       <span style="font-size:13px;font-weight:500;color:#111827">${a.name}</span>
       ${badge}
-      <span style="font-size:12px;color:#374151;text-align:right">${fmtCur(a.newMax)}</span>
-      <input type="text" class="fbar-input match-override" data-mid="${a.id}" value="${dispVal}" placeholder="${cur.toUpperCase()}" style="text-align:right;width:90px">
-      <span style="font-size:11px;color:#9ca3af">${a.matchFile||'—'}</span>
+      <span style="font-size:12px;color:#9ca3af;text-align:right">${priorDisp}</span>
+      <input type="text" class="fbar-input match-override" data-mid="${a.id}" value="${dispVal}" placeholder="${cur.toUpperCase()}" style="text-align:right">
+      <span style="font-size:11px;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.matchFile||'—'}</span>
     </div>`;
-  }).join('') : '';
+  }).join('');
 
   const logHtml = fb.matchLog.length ? `
     <div style="background:#1e1e1e;color:#d4d4d4;padding:12px 14px;border-radius:8px;font-family:monospace;font-size:12px;max-height:200px;overflow-y:auto;margin-top:12px;white-space:pre-wrap">${fb.matchLog.join('\n')}</div>` : '';
 
+  const anyFilled = included.some(a=>a.newMax!=null);
+
   return `
   <div style="display:flex;flex-direction:column;gap:16px">
+
     <div class="card">
-      <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:10px">
-        Upload Statement Files
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div>
+          <span style="font-weight:600;font-size:14px;color:#374151">Balances — ${fb.year}</span>
+          <span style="font-weight:400;color:#9ca3af;font-size:12px;margin-left:8px">Enter manually or auto-fill by uploading files below</span>
+        </div>
+        ${fbarCurrencyToggle(cur)}
+      </div>
+      ${fb.fxRate ? `<div style="font-size:12px;color:#15803d;margin-bottom:10px">Exchange rate: ₹${fb.fxRate.toFixed(2)} / $1 (Dec 31, ${fb.year})</div>` : ''}
+      <div style="margin-bottom:8px">
+        <div class="fbar-match-row" style="padding-bottom:6px">
+          <span class="fbar-acct-hdr">Institution</span>
+          <span class="fbar-acct-hdr">Status</span>
+          <span class="fbar-acct-hdr" style="text-align:right">Prior Max (${cur.toUpperCase()})</span>
+          <span class="fbar-acct-hdr" style="text-align:right">Max ${cur.toUpperCase()} — ${fb.year} ✎</span>
+          <span class="fbar-acct-hdr">Source</span>
+        </div>
+        ${accountRows}
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600;font-size:13px;color:#374151;margin-bottom:8px">
+        Auto-fill from files
         <span style="font-weight:400;color:#9ca3af;font-size:12px;margin-left:6px">PDF · XLS · XLSX · CSV · PNG · JPG</span>
       </div>
       <div class="fbar-drop" id="fbarStmtDrop" onclick="document.getElementById('fbarStmtInput').click()">
         <div style="font-size:18px;margin-bottom:4px">📂</div>
         <div style="font-size:13px;font-weight:500">Drop statement files or screenshots here, or click to browse</div>
-        <div style="font-size:12px;margin-top:3px">Year-end statements for ${fb.year} · XLS/CSV with account + balance columns updates balances directly</div>
+        <div style="font-size:12px;margin-top:3px">XLS/CSV with account + balance columns fills values directly · PDFs and images use text/OCR matching</div>
       </div>
       <input type="file" id="fbarStmtInput" accept=".pdf,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp,.gif" multiple style="display:none">
       ${fileList ? `<div style="margin-top:10px">${fileList}</div>` : ''}
+      ${logHtml}
     </div>
-
-    ${fb.fxRate ? `
-    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;font-size:13px;color:#15803d">
-      Exchange rate: ₹${fb.fxRate.toFixed(2)} / $1 (Dec 31, ${fb.year})
-    </div>` : ''}
 
     <div style="display:flex;gap:10px;align-items:center">
       <button class="btn btn-ghost" id="fbarMatchBack">← Accounts</button>
       <button class="btn btn-primary" id="fbarRunMatch" ${fbarFiles.length===0?'disabled':''}>Run Match</button>
-      ${fb.matchDone && included.some(a=>a.newMax!=null) ? `<button class="btn btn-ghost" id="fbarMatchNext">Export →</button>` : ''}
+      ${anyFilled ? `<button class="btn btn-ghost" id="fbarMatchNext">Export →</button>` : ''}
     </div>
-
-    ${logHtml}
-
-    ${fb.matchDone && matchRows ? `
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <div style="font-weight:600;font-size:14px;color:#374151">Match Results — override values if needed</div>
-        ${fbarCurrencyToggle(cur)}
-      </div>
-      <div style="margin-bottom:8px">
-        <div class="fbar-match-row" style="padding-bottom:6px">
-          <span class="fbar-acct-hdr">Institution</span>
-          <span class="fbar-acct-hdr">Status</span>
-          <span class="fbar-acct-hdr" style="text-align:right">Extracted (${cur.toUpperCase()})</span>
-          <span class="fbar-acct-hdr" style="text-align:right">Override (${cur.toUpperCase()})</span>
-          <span class="fbar-acct-hdr">File</span>
-        </div>
-        ${matchRows}
-      </div>
-    </div>` : ''}
   </div>`;
 }
 
