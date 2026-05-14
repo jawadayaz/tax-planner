@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.10';
+const APP_VERSION = '1.11';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1386,14 +1386,14 @@ function renderFbarMatch() {
     <div class="card">
       <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:10px">
         Upload Statement Files
-        <span style="font-weight:400;color:#9ca3af;font-size:12px;margin-left:6px">PDF · XLS · XLSX · CSV</span>
+        <span style="font-weight:400;color:#9ca3af;font-size:12px;margin-left:6px">PDF · XLS · XLSX · CSV · PNG · JPG</span>
       </div>
       <div class="fbar-drop" id="fbarStmtDrop" onclick="document.getElementById('fbarStmtInput').click()">
         <div style="font-size:18px;margin-bottom:4px">📂</div>
-        <div style="font-size:13px;font-weight:500">Drop statement files here or click to browse</div>
-        <div style="font-size:12px;margin-top:3px">Year-end bank/brokerage/MF statements for ${fb.year}</div>
+        <div style="font-size:13px;font-weight:500">Drop statement files or screenshots here, or click to browse</div>
+        <div style="font-size:12px;margin-top:3px">Year-end statements for ${fb.year} · XLS/CSV with account + balance columns updates balances directly</div>
       </div>
-      <input type="file" id="fbarStmtInput" accept=".pdf,.xls,.xlsx,.csv" multiple style="display:none">
+      <input type="file" id="fbarStmtInput" accept=".pdf,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp,.gif" multiple style="display:none">
       ${fileList ? `<div style="margin-top:10px">${fileList}</div>` : ''}
     </div>
 
@@ -1824,12 +1824,70 @@ async function importAccountsFromFile(file) {
 }
 
 function addFbarFiles(newFiles) {
-  const valid = newFiles.filter(f => /\.(pdf|xls|xlsx|csv)$/i.test(f.name));
+  const valid = newFiles.filter(f => /\.(pdf|xls|xlsx|csv|png|jpe?g|webp|gif|bmp|tiff?)$/i.test(f.name));
   if (!valid.length) return;
   const names = new Set(fbarFiles.map(f=>f.name));
   fbarFiles = [...fbarFiles, ...valid.filter(f=>!names.has(f.name))];
   S.fbar.matchDone = false;
   render();
+}
+
+// Try to match accounts from a structured XLS/XLSX/CSV file directly.
+// Returns count of accounts updated, or -1 if file has no detectable structure.
+async function matchFromStructured(file) {
+  const fb = S.fbar;
+  const fname = file.name.toLowerCase();
+  let rows;
+  try {
+    if (fname.endsWith('.csv')) {
+      const text = await file.text();
+      rows = text.split(/\r?\n/).map(l => l.split(',').map(c => c.trim().replace(/^"|"$/g,'')));
+    } else {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+    }
+  } catch(e) { return -1; }
+  if (!rows || rows.length < 2) return -1;
+
+  const hdr = rows[0].map(h => String(h).toLowerCase());
+  const col = pats => hdr.findIndex(h => pats.some(p => h.includes(p)));
+  const nameCol = col(['institution','bank','financial','entity','fund name','scheme','account name','name']);
+  const balCol  = col(['balance','value','amount','nav','closing','current','market','max','usd','inr','₹']);
+  if (nameCol === -1 || balCol === -1) return -1;
+
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
+  const rate = fb.fxRate || 84;
+  let matched = 0;
+
+  for (const acct of fb.accounts) {
+    if (!acct.include) continue;
+    const acctWords = norm(acct.name).split(' ').filter(w => w.length > 2);
+    if (!acctWords.length) continue;
+    let bestScore = 0, bestVal = null;
+
+    for (let r = 1; r < rows.length; r++) {
+      const rowName = String(rows[r][nameCol] || '').trim();
+      if (!rowName) continue;
+      const rowWords = norm(rowName).split(' ').filter(w => w.length > 2);
+      const hits = acctWords.filter(w => rowWords.some(rw => rw.includes(w) || w.includes(rw))).length;
+      const score = hits / acctWords.length;
+      if (score > bestScore) {
+        const raw = parseFloat(String(rows[r][balCol] || '').replace(/[,$₹\s,]/g,'').replace(/,/g,''));
+        if (!isNaN(raw) && raw > 0) { bestScore = score; bestVal = raw; }
+      }
+    }
+
+    if (bestScore >= 0.5 && bestVal !== null) {
+      // Heuristic: if value > 500 * fxRate it's almost certainly INR → convert
+      const usd = bestVal > 500 * rate ? Math.round(bestVal / rate) : Math.round(bestVal);
+      acct.newMax = usd; acct.newYearEnd = usd;
+      acct.matchStatus = 'matched'; acct.matchFile = file.name;
+      matched++;
+    }
+  }
+  return matched;
 }
 
 async function runFbarMatch() {
@@ -1848,27 +1906,66 @@ async function runFbarMatch() {
     if (!fb.fxRate) fb.fxRate = 84.07; // fallback
   }
 
-  // Extract text
+  // ── Pass 1: structured matching for XLS/XLSX/CSV ──────────────────────────
+  const structuredFiles = fbarFiles.filter(f => /\.(xls|xlsx|csv)$/i.test(f.name));
+  const textFiles = fbarFiles.filter(f => !/\.(xls|xlsx|csv)$/i.test(f.name));
+  let structuredTotal = 0;
+
+  for (const file of structuredFiles) {
+    fb.matchLog.push(`  Trying structured match: ${file.name}…`); render();
+    const n = await matchFromStructured(file);
+    if (n > 0) {
+      fb.matchLog.push(`  ✓ ${file.name} — updated ${n} account(s) directly from columns`);
+      structuredTotal += n;
+    } else if (n === -1) {
+      fb.matchLog.push(`  ↳ No column structure detected — will use text matching`);
+      textFiles.push(file); // fall back to text extraction
+    } else {
+      fb.matchLog.push(`  ↳ Columns found but no accounts matched — will use text matching`);
+      textFiles.push(file);
+    }
+    render();
+  }
+
+  // ── Pass 2: text/OCR extraction for PDFs and images ───────────────────────
   const fileTexts = [];
-  for (const file of fbarFiles) {
+  for (const file of textFiles) {
     try {
-      const text = await extractTextFromFile(file);
+      let text;
+      if (/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(file.name)) {
+        if (typeof Tesseract === 'undefined') throw new Error('OCR library not loaded');
+        fb.matchLog.push(`  OCR: ${file.name}…`); render();
+        const { data } = await Tesseract.recognize(file, 'eng', {
+          logger: m => {
+            if (m.status === 'recognizing text') {
+              fb.matchLog[fb.matchLog.length-1] = `  OCR: ${file.name}… ${Math.round((m.progress||0)*100)}%`;
+              render();
+            }
+          }
+        });
+        text = data.text;
+      } else {
+        text = await extractTextFromFile(file);
+      }
       fileTexts.push({ filename:file.name, text });
       fb.matchLog.push(`  ✓ ${file.name}  (${text.length.toLocaleString()} chars)`);
     } catch(e) { fb.matchLog.push(`  ✗ ${file.name}: ${e.message}`); }
     render();
   }
 
-  if (!fileTexts.length) {
+  if (!fileTexts.length && structuredTotal === 0) {
     fb.matchLog.push('✗ Could not read any files.'); fb.matchDone = true; render(); return;
   }
 
-  fb.matchLog.push(`\nMatching ${fb.accounts.filter(a=>a.include).length} accounts…`);
-  render();
+  if (fileTexts.length > 0) {
+    fb.matchLog.push(`\nText-matching ${fb.accounts.filter(a=>a.include && a.matchStatus!=='matched').length} remaining accounts…`);
+    render();
+  }
 
-  // Local client-side matching
+  // Local client-side text matching (only for accounts not already matched by structured pass)
   for (const acct of fb.accounts) {
     if (!acct.include) continue;
+    if (acct.matchStatus === 'matched') continue; // already handled by structured pass
     let bestMax = 0, bestYE = 0, bestFile = null;
     for (const { filename, text } of fileTexts) {
       const result = findAccountInText(acct.name, text);
