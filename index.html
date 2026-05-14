@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.09';
+const APP_VERSION = '1.10';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -252,6 +252,16 @@ const GIFTS = [
     notes:'Aliza priority $87,351 equalization. Filed Apr 27, 2026.' },
 ];
 
+// ─── FBAR FILERS ──────────────────────────────────────────────────────────────
+// active:true = shown now; active:false = future (add when they have India accounts)
+const FBAR_FILERS = [
+  { id:'jawad',        label:'Jawad Ayaz',       active:true  },
+  { id:'chhaya',       label:'Chhaya Ayaz',      active:true  },
+  { id:'mariam_trust', label:'Mariam Ayaz Trust', active:true  },
+  { id:'sakina',       label:'Sakina Ayaz',       active:false },
+  { id:'aliza',        label:'Aliza Ayaz',        active:false },
+];
+
 // ─── GLOBAL WORKER (centralized secrets hub) ─────────────────────────────────
 const GLOBAL_WORKER_URL = 'https://global-worker.jawadayaz.workers.dev';
 const GLOBAL_WORKER_SECRET = '81bb75bce37a6d0f848df3afa7227cc9ad803b575f4887bc5b5c55d67ae561d8';
@@ -259,10 +269,59 @@ const GLOBAL_WORKER_SECRET = '81bb75bce37a6d0f848df3afa7227cc9ad803b575f4887bc5b
 // ─── STATE ────────────────────────────────────────────────────────────────────
 // driveFiles: { jawad_chhaya: [{id,name},...], sakina: [...], ... } — keyed by member ID
 let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:{},
-  fbar: { step:'setup', year:2025, filerName:'Jawad Ayaz', accounts:[], fileTexts:[], fxRate:null, matchLog:[], matchDone:false }
+  fbar: { filer:'jawad', step:'setup', year:2025, accounts:[], fxRate:null, matchLog:[], matchDone:false, completed:false }
 };
 // File objects can't be serialised — kept in module-level var
 let fbarFiles = [];
+
+// ─── FBAR PERSISTENCE ────────────────────────────────────────────────────────
+// tp_fbar: { [filerId]: { [year]: { step, accounts, fxRate, matchLog, matchDone, completed } } }
+
+function saveFbarData() {
+  const fb = S.fbar;
+  try {
+    const all = JSON.parse(localStorage.getItem('tp_fbar') || '{}');
+    if (!all[fb.filer]) all[fb.filer] = {};
+    all[fb.filer][fb.year] = {
+      step: fb.step, accounts: fb.accounts, fxRate: fb.fxRate,
+      matchLog: fb.matchLog, matchDone: fb.matchDone, completed: fb.completed || false,
+    };
+    localStorage.setItem('tp_fbar', JSON.stringify(all));
+  } catch(e) {}
+}
+
+function loadFbarData(filer, year) {
+  try {
+    const all = JSON.parse(localStorage.getItem('tp_fbar') || '{}');
+    const saved = all[filer]?.[year];
+    if (saved) {
+      return { filer, year, step: saved.step || 'setup', accounts: saved.accounts || [],
+        fxRate: saved.fxRate || null, matchLog: saved.matchLog || [],
+        matchDone: saved.matchDone || false, completed: saved.completed || false };
+    }
+    // Carry accounts forward from previous completed year
+    const prev = all[filer]?.[year - 1];
+    if (prev?.completed && prev.accounts?.length) {
+      const carried = prev.accounts.map(a => ({
+        ...a,
+        priorMax: a.newMax ?? a.priorMax,
+        priorYearEnd: a.newYearEnd ?? a.priorYearEnd,
+        newMax: null, newYearEnd: null, matchFile: null, matchStatus: 'pending',
+      }));
+      return { filer, year, step: 'setup', accounts: carried, fxRate: null, matchLog: [],
+        matchDone: false, completed: false, _carriedFrom: year - 1 };
+    }
+  } catch(e) {}
+  return { filer, year, step: 'setup', accounts: [], fxRate: null, matchLog: [], matchDone: false, completed: false };
+}
+
+function switchFbarFiler(filerId) {
+  saveFbarData();
+  fbarFiles = [];
+  const newState = loadFbarData(filerId, S.fbar.year);
+  S.fbar = newState;
+  render();
+}
 
 // ─── PERSIST ──────────────────────────────────────────────────────────────────
 // Bump STATUS_VER whenever SEED_STATUS changes significantly — discards stale localStorage overrides
@@ -293,6 +352,9 @@ function loadAll() {
   } catch { localStorage.removeItem('tp_drive'); }
   // Auto-fetch a fresh Drive token in the background if none cached
   if (!S.driveToken) fetchDriveToken();
+  // Restore FBAR data for current filer
+  const fbarRestored = loadFbarData(S.fbar.filer, S.fbar.year);
+  S.fbar = fbarRestored;
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -1151,12 +1213,32 @@ function renderFbar() {
   if (fb.step === 'match')    body = renderFbarMatch();
   if (fb.step === 'export')   body = renderFbarExport();
 
+  // Filer tabs — show status from localStorage for current year
+  let savedAll = {};
+  try { savedAll = JSON.parse(localStorage.getItem('tp_fbar') || '{}'); } catch(e) {}
+  const filerTabs = FBAR_FILERS.filter(f => f.active).map(f => {
+    const saved = savedAll[f.id]?.[fb.year];
+    const done  = saved?.completed;
+    const inprog = saved && !done && (saved.accounts?.length > 0 || saved.step !== 'setup');
+    const active = f.id === fb.filer;
+    const badge = done   ? `<span style="font-size:10px;background:#dcfce7;color:#15803d;border-radius:3px;padding:1px 5px;margin-left:5px">✓ done</span>`
+                : inprog ? `<span style="font-size:10px;background:#fef3c7;color:#92400e;border-radius:3px;padding:1px 5px;margin-left:5px">in progress</span>`
+                : '';
+    return `<button onclick="switchFbarFiler('${f.id}')"
+      style="padding:7px 14px;border-radius:7px;border:1px solid ${active?'#4f46e5':'#e5e7eb'};
+             background:${active?'#4f46e5':'#fff'};color:${active?'#fff':'#374151'};
+             font-size:13px;font-weight:${active?'600':'400'};cursor:pointer;white-space:nowrap">
+      ${f.label}${badge}
+    </button>`;
+  }).join('');
+
   return `
   <div style="max-width:900px">
-    <div style="margin-bottom:16px">
+    <div style="margin-bottom:14px">
       <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0">FBAR — FinCEN Form 114</h1>
       <p style="font-size:13px;color:#6b7280;margin:4px 0 0">Annual Foreign Bank Account Report · US persons with foreign accounts &gt; $10,000</p>
     </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">${filerTabs}</div>
     ${stepBar}
     ${body}
   </div>`;
@@ -1164,11 +1246,16 @@ function renderFbar() {
 
 function renderFbarSetup() {
   const fb = S.fbar;
+  const filerLabel = FBAR_FILERS.find(f => f.id === fb.filer)?.label || fb.filer;
+  const carriedBanner = fb._carriedFrom ? `
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:13px;color:#1d4ed8;margin-bottom:0">
+      Accounts carried forward from ${fb._carriedFrom} — upload prior year FBAR PDF below to refresh, or click Next to review.
+    </div>` : '';
   return `
   <div style="display:flex;flex-direction:column;gap:16px">
     <div class="card">
       <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:14px">Tax Year & Filer</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:${fb._carriedFrom?'14px':'0'}">
         <div>
           <label style="font-size:12px;color:#6b7280;font-weight:500;display:block;margin-bottom:4px">Tax Year</label>
           <select id="fbarYear" class="fbar-input" style="width:auto;min-width:120px">
@@ -1176,10 +1263,11 @@ function renderFbarSetup() {
           </select>
         </div>
         <div>
-          <label style="font-size:12px;color:#6b7280;font-weight:500;display:block;margin-bottom:4px">Primary Filer Name</label>
-          <input id="fbarName" type="text" class="fbar-input" value="${fb.filerName}" placeholder="e.g. Jawad Ayaz">
+          <label style="font-size:12px;color:#6b7280;font-weight:500;display:block;margin-bottom:4px">Filer</label>
+          <div style="padding:5px 8px;font-size:13px;color:#374151;font-weight:500">${filerLabel}</div>
         </div>
       </div>
+      ${carriedBanner}
     </div>
 
     <div class="card">
@@ -1371,7 +1459,10 @@ function renderFbarExport() {
           <div style="font-size:11px;color:#9ca3af">per USD · Dec 31, ${fb.year}</div>
         </div>
       </div>
-      <div style="font-size:12px;color:#6b7280;margin-bottom:10px">Filer: ${fb.filerName || '—'}</div>
+      <div style="font-size:12px;color:#6b7280;margin-bottom:10px">
+        Filer: ${FBAR_FILERS.find(f=>f.id===fb.filer)?.label || fb.filer}
+        ${fb.completed ? `<span style="margin-left:10px;background:#dcfce7;color:#15803d;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">✓ Completed</span>` : ''}
+      </div>
 
       <table style="margin-bottom:16px">
         <thead><tr>
@@ -1422,8 +1513,13 @@ function attachFbarListeners() {
 
   // ── Setup step ──
   if (fb.step === 'setup') {
-    document.getElementById('fbarYear')?.addEventListener('change', e => { fb.year = parseInt(e.target.value); });
-    document.getElementById('fbarName')?.addEventListener('input', e => { fb.filerName = e.target.value; });
+    document.getElementById('fbarYear')?.addEventListener('change', e => {
+      saveFbarData(); // save state for current year before switching
+      fbarFiles = [];
+      const newState = loadFbarData(fb.filer, parseInt(e.target.value));
+      S.fbar = newState;
+      render();
+    });
 
     const priorInput = document.getElementById('fbarPriorInput');
     priorInput?.addEventListener('change', async e => {
@@ -1476,14 +1572,14 @@ function attachFbarListeners() {
     });
 
     document.getElementById('fbarSetupNext')?.addEventListener('click', () => {
-      fb.year = parseInt(document.getElementById('fbarYear').value);
-      fb.filerName = document.getElementById('fbarName').value;
+      fb._carriedFrom = null; // dismiss carry-forward banner once user proceeds
       fb.step = 'accounts';
+      saveFbarData();
       // Fetch FX rate
       if (!fb.fxRate) {
         fetch(`${FBAR_WORKER}/api/fx?year=${fb.year}`)
           .then(r => r.ok ? r.json() : null)
-          .then(d => { if (d?.rate) { fb.fxRate = d.rate; render(); } })
+          .then(d => { if (d?.rate) { fb.fxRate = d.rate; saveFbarData(); render(); } })
           .catch(() => {});
       }
       render();
@@ -1492,7 +1588,7 @@ function attachFbarListeners() {
 
   // ── Accounts step ──
   if (fb.step === 'accounts') {
-    document.getElementById('fbarAcctBack')?.addEventListener('click', () => { fb.step='setup'; render(); });
+    document.getElementById('fbarAcctBack')?.addEventListener('click', () => { fb.step='setup'; saveFbarData(); render(); });
 
     // Import drop zone
     const importInput = document.getElementById('fbarImportInput');
@@ -1547,21 +1643,22 @@ function attachFbarListeners() {
         else if (field === 'priorMax') fb.accounts[i][field] = el.value ? parseFloat(el.value) : null;
         else fb.accounts[i][field] = el.value;
       });
-      // blur: update state only, defer any render so pending clicks still fire
+      // blur: update state + persist; defer render so pending clicks still fire
       el.addEventListener('blur', () => {
         if (!fb.accounts[i]) return;
         if (field === 'priorMax') fb.accounts[i][field] = el.value ? parseFloat(el.value) : null;
         else if (field !== 'include') fb.accounts[i][field] = el.value;
+        saveFbarData();
       });
     });
 
-    document.getElementById('fbarAcctNext')?.addEventListener('click', () => { fb.step='match'; render(); });
+    document.getElementById('fbarAcctNext')?.addEventListener('click', () => { fb.step='match'; saveFbarData(); render(); });
   }
 
   // ── Match step ──
   if (fb.step === 'match') {
-    document.getElementById('fbarMatchBack')?.addEventListener('click', () => { fb.step='accounts'; render(); });
-    document.getElementById('fbarMatchNext')?.addEventListener('click', () => { fb.step='export'; render(); });
+    document.getElementById('fbarMatchBack')?.addEventListener('click', () => { fb.step='accounts'; saveFbarData(); render(); });
+    document.getElementById('fbarMatchNext')?.addEventListener('click', () => { fb.step='export'; saveFbarData(); render(); });
 
     const stmtInput = document.getElementById('fbarStmtInput');
     stmtInput?.addEventListener('change', e => {
@@ -1598,12 +1695,24 @@ function attachFbarListeners() {
 
   // ── Export step ──
   if (fb.step === 'export') {
-    document.getElementById('fbarExportBack')?.addEventListener('click', () => { fb.step='match'; render(); });
-    document.getElementById('fbarDownloadPDF')?.addEventListener('click', () => downloadFbarPDF());
+    document.getElementById('fbarExportBack')?.addEventListener('click', () => { fb.step='match'; saveFbarData(); render(); });
+    document.getElementById('fbarDownloadPDF')?.addEventListener('click', () => {
+      downloadFbarPDF();
+      fb.completed = true;
+      fb.step = 'export';
+      saveFbarData();
+      render(); // show ✓ Completed badge
+    });
     document.getElementById('fbarReset')?.addEventListener('click', () => {
-      if (!confirm('Reset FBAR data and start over?')) return;
+      const filerLabel = FBAR_FILERS.find(f=>f.id===fb.filer)?.label || fb.filer;
+      if (!confirm(`Reset FBAR for ${filerLabel} ${fb.year} and start over?`)) return;
+      try {
+        const all = JSON.parse(localStorage.getItem('tp_fbar') || '{}');
+        if (all[fb.filer]) delete all[fb.filer][fb.year];
+        localStorage.setItem('tp_fbar', JSON.stringify(all));
+      } catch(e) {}
       fbarFiles = [];
-      S.fbar = { step:'setup', year:S.year, filerName:fb.filerName, accounts:[], fileTexts:[], fxRate:null, matchLog:[], matchDone:false };
+      S.fbar = { filer: fb.filer, step:'setup', year:fb.year, accounts:[], fxRate:null, matchLog:[], matchDone:false, completed:false };
       render();
     });
   }
@@ -1784,6 +1893,7 @@ async function runFbarMatch() {
 
   fb.matchLog.push('\nDone. Override any values in the table below.');
   fb.matchDone = true;
+  saveFbarData();
   render();
 }
 
@@ -1810,7 +1920,7 @@ function downloadFbarPDF() {
   doc.setFont(undefined,'normal'); doc.setFontSize(9);
   [
     ['Calendar year', String(fb.year)],
-    ['Filer name', fb.filerName || '—'],
+    ['Filer name', FBAR_FILERS.find(f=>f.id===fb.filer)?.label || fb.filer],
     ['Exchange rate (Dec 31)', `₹${rate.toFixed(2)} per USD`],
     ['Accounts reported', String(included.length)],
     ['Total maximum value (USD)', '$'+Math.round(totalMax).toLocaleString()],
@@ -1843,7 +1953,7 @@ function downloadFbarPDF() {
   y = doc.lastAutoTable.finalY + 8;
   doc.setFontSize(8); doc.setTextColor(120);
   doc.text('Family Tax Planner · jawadayaz.github.io/tax-planner · '+new Date().toLocaleDateString(), 14, y);
-  doc.save(`FBAR_${fb.year}_reference.pdf`);
+  doc.save(`FBAR_${fb.year}_${fb.filer}_reference.pdf`);
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
