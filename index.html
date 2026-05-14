@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.13';
+const APP_VERSION = '1.14';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -314,7 +314,7 @@ function loadFbarData(filer, year) {
         matchDone: false, completed: false, _carriedFrom: year - 1, balCurrency: 'inr' };
     }
   } catch(e) {}
-  return { filer, year, step: 'setup', accounts: [], fxRate: null, matchLog: [], matchDone: false, completed: false };
+  return { filer, year, step: 'setup', accounts: [], fxRate: null, matchLog: [], matchDone: false, completed: false, balCurrency: 'inr' };
 }
 
 function switchFbarFiler(filerId) {
@@ -1350,7 +1350,7 @@ function renderFbarAccounts() {
           <span class="fbar-acct-hdr">Acct #</span>
           <span class="fbar-acct-hdr">Type</span>
           <span class="fbar-acct-hdr">Ownership</span>
-          <span class="fbar-acct-hdr">Prior Max (${fb.balCurrency.toUpperCase()})</span>
+          <span class="fbar-acct-hdr">Prior Max (${( fb.balCurrency || 'inr' ).toUpperCase()})</span>
           <span class="fbar-acct-hdr">Include</span>
           <span></span>
         </div>
@@ -1367,7 +1367,7 @@ function renderFbarAccounts() {
           <select class="fbar-input" data-ai="${i}" data-f="ownership">
             ${[['sole','Sole'],['joint','Joint'],['sigauth','Sig Auth']].map(([v,l])=>`<option value="${v}" ${v===a.ownership?'selected':''}>${l}</option>`).join('')}
           </select>
-          <input type="text" class="fbar-input" data-ai="${i}" data-f="priorMax" value="${dispPrior}" placeholder="${fb.balCurrency.toUpperCase()}">
+          <input type="text" class="fbar-input" data-ai="${i}" data-f="priorMax" value="${dispPrior}" placeholder="${( fb.balCurrency || 'inr' ).toUpperCase()}">
           <input type="checkbox" ${a.include?'checked':''} data-ai="${i}" data-f="include" style="width:auto;cursor:pointer">
           <button style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;padding:0" data-del="${i}">×</button>
         </div>`;}).join('')}
