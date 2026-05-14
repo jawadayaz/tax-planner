@@ -130,7 +130,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.07';
+const APP_VERSION = '1.08';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1930,27 +1930,6 @@ function resetAll() {
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
-function silentDriveAuth() {
-  // Called once GIS library is ready — silently gets a token if user previously authorized
-  if (S.driveToken) return; // already have a valid cached token
-  if (typeof google === 'undefined' || !google.accounts?.oauth2) return;
-  try {
-    google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/drive.readonly',
-      prompt: '',  // no popup — silent only
-      callback: r => {
-        if (r.error || !r.access_token) return; // silently fail
-        S.driveToken = r.access_token;
-        const exp = Date.now() + (r.expires_in ? (r.expires_in - 300) * 1000 : 55 * 60 * 1000);
-        localStorage.setItem('tp_drive', JSON.stringify({token: r.access_token, exp}));
-        render();
-      },
-      error_callback: () => {} // silent — user will click Connect if needed
-    }).requestAccessToken({ prompt: '' });
-  } catch { /* silent */ }
-}
-
 (function init() {
   const sel = document.getElementById('yearSelect');
   YEARS.forEach(y => {
@@ -1961,18 +1940,6 @@ function silentDriveAuth() {
   sel.value = S.year;
   loadAll();
   navigate('dashboard');
-  // Attempt silent Drive auth after GIS loads (100ms poll, give up after 5s)
-  if (!S.driveToken) {
-    let attempts = 0;
-    const tryAuth = setInterval(() => {
-      attempts++;
-      if (S.driveToken || attempts > 50) { clearInterval(tryAuth); return; }
-      if (typeof google !== 'undefined' && google.accounts?.oauth2) {
-        clearInterval(tryAuth);
-        silentDriveAuth();
-      }
-    }, 100);
-  }
 })();
 </script>
 </body>
