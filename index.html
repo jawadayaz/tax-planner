@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.19';
+const APP_VERSION = '1.20';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -298,7 +298,7 @@ function loadFbarData(filer, year) {
     const saved = all[filer]?.[year];
     if (saved) {
       return { filer, year, accounts: saved.accounts || [],
-        fxRate: saved.fxRate || null, files: saved.files || [],
+        fxRate: saved.fxRate || null, files: [], // File objects don't survive page reload — always start fresh
         matchRan: saved.matchRan || false, completed: saved.completed || false,
         balCurrency: saved.balCurrency || 'inr', matchLog: saved.matchLog || [],
         pdfPasswords: saved.pdfPasswords || [] };
@@ -1516,6 +1516,12 @@ async function runMatch() {
   const fb = S.fbar;
   fb.matchLog = [];
   fb.matchRan = false;
+
+  if (fbarFileObjects.length === 0) {
+    fb.matchLog.push('No files loaded — please upload files first.');
+    fb.matchRan = true;
+    saveFbarData(); render(); return;
+  }
 
   // Split file objects by type
   const prevFbarObjs   = fbarFileObjects.filter((_, i) => fb.files[i]?.fileType === 'prev_fbar');
