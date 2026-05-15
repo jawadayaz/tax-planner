@@ -1146,15 +1146,19 @@ function extractAmounts(text) {
 // Use this to avoid picking up account numbers like 50007148 which look like large amounts.
 function extractCurrencyAmounts(text) {
   const results = [];
+  let hadInrMatch = false;
   // First priority: explicit ₹ or Rs prefix
   const inrRe = /(?:₹|Rs\.?\s*)([\d,]+(?:\.\d{1,2})?)/g;
   for (const m of text.matchAll(inrRe)) {
+    hadInrMatch = true;
     const digits = m[1].replace(/[,. ]/g,'');
     if (digits.length > 11) continue; // >11 digits is an account number, not a balance
     const n = parseFloat(m[1].replace(/,/g,''));
     if (n >= 1000) results.push(n);
   }
-  if (results.length) return results;
+  // If any ₹/Rs-prefixed token was found (even if rejected as too large), don't fall through
+  // to commaRe — it would match sub-portions of the oversized number as fake balances.
+  if (results.length || hadInrMatch) return results;
   // Second priority: comma-formatted numbers (Indian or standard grouping) — these are financial values
   const commaRe = /\b(\d{1,2},\d{2},\d{3}(?:,\d{3})*|\d{1,3},\d{3}(?:,\d{3})+)\b/g;
   for (const m of text.matchAll(commaRe)) {
