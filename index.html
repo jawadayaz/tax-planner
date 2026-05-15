@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.15';
+const APP_VERSION = '1.16';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1314,8 +1314,24 @@ function renderFbarSetup() {
 function renderFbarAccounts() {
   const fb = S.fbar;
   const accounts = fb.accounts;
+  const _r = fb.fxRate || 84;
+  const _c = fb.balCurrency || 'inr';
   const importMsg = fb._importMsg ? `<div style="color:#16a34a;font-size:12px;margin-top:6px">${fb._importMsg}</div>` : '';
   const importErr = fb._importErr ? `<div style="color:#dc2626;font-size:12px;margin-top:6px">${fb._importErr}</div>` : '';
+  const acctRows = accounts.map((a,i) => {
+    const priorVal = a.priorMax != null ? (_c === 'inr' ? Math.round(a.priorMax * _r) : Math.round(a.priorMax)) : '';
+    const typeOpts = ['bank','brokerage','mf','other'].map(t => '<option value="' + t + '"' + (t === a.type ? ' selected' : '') + '>' + FBAR_TYPE_LABELS[t] + '</option>').join('');
+    const ownOpts = [['sole','Sole'],['joint','Joint'],['sigauth','Sig Auth']].map(ov => '<option value="' + ov[0] + '"' + (ov[0] === a.ownership ? ' selected' : '') + '>' + ov[1] + '</option>').join('');
+    return '<div class="fbar-acct-row" id="acct-row-' + i + '">'
+      + '<input type="text" class="fbar-input" data-ai="' + i + '" data-f="name" value="' + (a.name||'') + '" placeholder="Institution name">'
+      + '<input type="text" class="fbar-input" data-ai="' + i + '" data-f="number" value="' + (a.number||'') + '" placeholder="****1234" style="font-family:monospace;font-size:12px">'
+      + '<select class="fbar-input" data-ai="' + i + '" data-f="type">' + typeOpts + '</select>'
+      + '<select class="fbar-input" data-ai="' + i + '" data-f="ownership">' + ownOpts + '</select>'
+      + '<input type="text" class="fbar-input" data-ai="' + i + '" data-f="priorMax" value="' + priorVal + '" placeholder="' + _c.toUpperCase() + '">'
+      + '<input type="checkbox"' + (a.include ? ' checked' : '') + ' data-ai="' + i + '" data-f="include" style="width:auto;cursor:pointer">'
+      + '<button style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;padding:0" data-del="' + i + '">×</button>'
+      + '</div>';
+  }).join('');
   return `
   <div style="display:flex;flex-direction:column;gap:16px">
 
@@ -1354,20 +1370,7 @@ function renderFbarAccounts() {
           <span class="fbar-acct-hdr">Include</span>
           <span></span>
         </div>
-        ${(function(){ const _r=fb.fxRate||84; const _c=fb.balCurrency||'inr'; return accounts.map((a,i)=>`
-        <div class="fbar-acct-row" id="acct-row-${i}">
-          <input type="text" class="fbar-input" data-ai="${i}" data-f="name" value="${a.name}" placeholder="Institution name">
-          <input type="text" class="fbar-input" data-ai="${i}" data-f="number" value="${a.number||''}" placeholder="****1234" style="font-family:monospace;font-size:12px">
-          <select class="fbar-input" data-ai="${i}" data-f="type">
-            ${['bank','brokerage','mf','other'].map(t=>`<option value="${t}" ${t===a.type?'selected':''}>${FBAR_TYPE_LABELS[t]}</option>`).join('')}
-          </select>
-          <select class="fbar-input" data-ai="${i}" data-f="ownership">
-            ${[['sole','Sole'],['joint','Joint'],['sigauth','Sig Auth']].map(([v,l])=>`<option value="${v}" ${v===a.ownership?'selected':''}>${l}</option>`).join('')}
-          </select>
-          <input type="text" class="fbar-input" data-ai="${i}" data-f="priorMax" value="${a.priorMax!=null?(_c==='inr'?Math.round(a.priorMax*_r):Math.round(a.priorMax)):''}" placeholder="${_c.toUpperCase()}">
-          <input type="checkbox" ${a.include?'checked':''} data-ai="${i}" data-f="include" style="width:auto;cursor:pointer">
-          <button style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;padding:0" data-del="${i}">×</button>
-        </div>`).join(''); })()
+        ${acctRows}
       </div>`}
     </div>
 
