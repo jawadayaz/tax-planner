@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.18';
+const APP_VERSION = '1.19';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -269,7 +269,7 @@ const GLOBAL_WORKER_SECRET = '81bb75bce37a6d0f848df3afa7227cc9ad803b575f4887bc5b
 // ─── STATE ────────────────────────────────────────────────────────────────────
 // driveFiles: { jawad_chhaya: [{id,name},...], sakina: [...], ... } — keyed by member ID
 let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:{},
-  fbar: { filer:'jawad', year:2025, accounts:[], files:[], fxRate:null, matchRan:false, completed:false, balCurrency:'inr' }
+  fbar: { filer:'jawad', year:2025, accounts:[], files:[], fxRate:null, pdfPasswords:[], matchRan:false, completed:false, balCurrency:'inr' }
 };
 
 // ─── FBAR PERSISTENCE ────────────────────────────────────────────────────────
@@ -286,6 +286,7 @@ function saveFbarData() {
       completed: fb.completed || false,
       balCurrency: fb.balCurrency || 'inr',
       matchLog: fb.matchLog || [],
+      pdfPasswords: fb.pdfPasswords || [],
     };
     localStorage.setItem('tp_fbar', JSON.stringify(all));
   } catch(e) {}
@@ -299,7 +300,8 @@ function loadFbarData(filer, year) {
       return { filer, year, accounts: saved.accounts || [],
         fxRate: saved.fxRate || null, files: saved.files || [],
         matchRan: saved.matchRan || false, completed: saved.completed || false,
-        balCurrency: saved.balCurrency || 'inr', matchLog: saved.matchLog || [] };
+        balCurrency: saved.balCurrency || 'inr', matchLog: saved.matchLog || [],
+        pdfPasswords: saved.pdfPasswords || [] };
     }
     // Carry accounts forward from previous completed year
     const prev = all[filer]?.[year - 1];
@@ -987,7 +989,8 @@ async function extractTextFromFile(file) {
 
   // Standard PDF via PDF.js
   initPdfWorker();
-  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pdf = await pdfjsLib.getDocument({ data: buf, password: extractTextFromFile._pwd || '' }).promise;
+  extractTextFromFile._pwd = null; // clear after use
   let text = '';
   for (let p=1; p<=pdf.numPages; p++) {
     const page = await pdf.getPage(p);
@@ -1447,6 +1450,7 @@ async function parseSummaryFile(file) {
       type:      col(['account type','type','category']),
       ownership: col(['ownership','owner','joint']),
       balance:   col(['max balance','balance','value','amount','usd','nav','current value']),
+      password:  col(['password','pwd','pass','pdf password','statement password']),
     };
     // Extract FX rate from headers if present (e.g. "inr/usd rate=₹89.8")
     let csvRate = null;
@@ -1476,14 +1480,23 @@ async function parseSummaryFile(file) {
       const rawOwn = ci.ownership >= 0 ? String(row[ci.ownership] || '').toLowerCase() : '';
       const ownership = rawOwn.includes('joint') ? 'joint' : rawOwn.includes('sig') ? 'sigauth' : 'sole';
       const number = ci.number >= 0 ? String(row[ci.number] || '').trim() : '';
-      rows.push({ name, number, type, ownership, balUSD });
+      const password = ci.password >= 0 ? String(row[ci.password] || '').trim() : '';
+      rows.push({ name, number, type, ownership, balUSD, password });
     }
+    // Store all non-empty passwords in fbar state for use when opening PDFs
+    const passwords = rows.map(r => r.password).filter(p => p && p.length > 0);
+    if (passwords.length > 0) {
+      S.fbar.pdfPasswords = [...new Set(passwords)];
+    }
+    // Also extract FX rate and store it
+    if (csvRate && !S.fbar.fxRate) { S.fbar.fxRate = csvRate; }
   }
   return rows;
 }
 
 function wordOverlap(a, b) {
-  const norm = s => s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
+  if (!a || !b) return 0;
+  const norm = s => String(s).toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
   const wa = norm(a).split(' ').filter(w => w.length > 2);
   const wb = new Set(norm(b).split(' ').filter(w => w.length > 2));
   if (!wa.length || !wb.size) return 0;
@@ -1522,11 +1535,12 @@ async function runMatch() {
       const parsed = tryParseXFAAccounts(text) || parseFbarTextAccounts(text);
       fb.matchLog.push('  Found ' + parsed.length + ' account(s)');
       for (const p of parsed) {
+        if (!p.name || String(p.name).trim().length < 2) continue;
         const exists = newAccounts.find(a => wordOverlap(p.name, a.name) >= 0.6);
         if (!exists) {
           newAccounts.push({
             id: Math.random().toString(36).slice(2,8),
-            name: p.name, type: p.type || 'bank', number: p.number || '',
+            name: String(p.name).trim(), type: p.type || 'bank', number: p.number || '',
             ownership: p.ownership || 'sole',
             prevMax: p.max_value_usd || null,
             newMax: null, status: 'needs_update', source: null, include: true,
@@ -1594,7 +1608,24 @@ async function runMatch() {
         });
         text = result.data.text;
       } else {
-        text = await extractTextFromFile(file);
+        // Try without password first; if protected, try each stored password
+        try {
+          text = await extractTextFromFile(file);
+        } catch(pwdErr) {
+          if (pwdErr.message && pwdErr.message.toLowerCase().includes('password')) {
+            const passwords = fb.pdfPasswords || [];
+            let opened = false;
+            for (const pwd of passwords) {
+              try {
+                extractTextFromFile._pwd = pwd;
+                text = await extractTextFromFile(file);
+                fb.matchLog.push('    (unlocked with stored password)');
+                opened = true; break;
+              } catch { /* try next */ }
+            }
+            if (!opened) throw new Error('Password-protected — no matching password found in summary');
+          } else { throw pwdErr; }
+        }
       }
       let fileMatched = false;
       const rate = fb.fxRate || 84;
