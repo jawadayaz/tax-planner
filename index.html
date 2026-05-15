@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.16';
+const APP_VERSION = '1.17';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1138,6 +1138,26 @@ function extractAmounts(text) {
   return results;
 }
 
+// Returns only ₹-prefixed amounts, or Indian/standard comma-formatted numbers (not bare integers).
+// Use this to avoid picking up account numbers like 50007148 which look like large amounts.
+function extractCurrencyAmounts(text) {
+  const results = [];
+  // First priority: explicit ₹ or Rs prefix
+  const inrRe = /(?:₹|Rs\.?\s*)([\d,]+(?:\.\d{1,2})?)/g;
+  for (const m of text.matchAll(inrRe)) {
+    const n = parseFloat(m[1].replace(/,/g,''));
+    if (n >= 1000) results.push(n);
+  }
+  if (results.length) return results;
+  // Second priority: comma-formatted numbers (Indian or standard grouping) — these are financial values
+  const commaRe = /\b(\d{1,2},\d{2},\d{3}(?:,\d{3})*|\d{1,3},\d{3}(?:,\d{3})+)\b/g;
+  for (const m of text.matchAll(commaRe)) {
+    const n = parseFloat(m[1].replace(/,/g,''));
+    if (n >= 1000) results.push(n);
+  }
+  return results;
+}
+
 function extractLabeledAmounts(text) {
   const lower = text.toLowerCase();
   const labeled = [];
@@ -1166,6 +1186,27 @@ function findAccountInText(accountName, fullText) {
   const norm = s => s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
   const words = norm(accountName).split(' ').filter(w => w.length > 2);
   if (!words.length) return null;
+
+  // ── Pass A: line-by-line (works well for tabular OCR / screenshots) ──
+  const lines = fullText.split(/\n/);
+  let bestLineScore = 0, bestLineAmt = 0;
+  for (let li = 0; li < lines.length; li++) {
+    const lineNorm = norm(lines[li]);
+    const hits = words.filter(w => lineNorm.includes(w)).length;
+    const score = hits / words.length;
+    if (score >= 0.5 && score > bestLineScore) {
+      // Look at this line + next 2 for an amount (columns may wrap)
+      const snippet = lines.slice(li, li + 3).join(' ');
+      // Prefer ₹-prefixed / comma-formatted amounts (avoids account numbers)
+      const curAmts = extractCurrencyAmounts(snippet).sort((a,b)=>b-a);
+      const fallback = extractAmounts(snippet).sort((a,b)=>b-a);
+      const amt = curAmts[0] || fallback[0] || 0;
+      if (amt > 0) { bestLineScore = score; bestLineAmt = amt; }
+    }
+  }
+  if (bestLineAmt > 0) return { score:bestLineScore, peakBalance:bestLineAmt, yearEndBalance:bestLineAmt };
+
+  // ── Pass B: sliding-window fallback (long prose / statement PDFs) ──
   const lowerText = fullText.toLowerCase();
   const WIN=700, STEP=50;
   let bestScore=0, bestPos=0;
@@ -1180,8 +1221,10 @@ function findAccountInText(accountName, fullText) {
   const end = Math.min(fullText.length, bestPos+WIN+400);
   const region = fullText.slice(start, end);
   const labeledVals = extractLabeledAmounts(region).map(l=>l.value).sort((a,b)=>b-a);
+  // Prefer currency-formatted amounts to avoid picking up account numbers
+  const curAmts = extractCurrencyAmounts(region).sort((a,b)=>b-a);
   const allAmts = extractAmounts(region).sort((a,b)=>b-a);
-  const peakBalance = labeledVals[0] || allAmts[0] || 0;
+  const peakBalance = labeledVals[0] || curAmts[0] || allAmts[0] || 0;
   let yearEndBalance = peakBalance;
   const dec31pos = region.search(/(?:31[\s/-]?dec|december[\s/-]?31|31\/12)/i);
   if (dec31pos !== -1) {
