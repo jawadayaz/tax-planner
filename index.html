@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.20';
+const APP_VERSION = '1.21';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1263,6 +1263,74 @@ const fmtUSD = n => n==null ? '—' : '$'+Math.round(n).toLocaleString();
 const fmtINR = n => n==null ? '—' : '₹'+Math.round(n).toLocaleString('en-IN');
 
 let fbarFileObjects = []; // File objects (not serializable — parallel array to S.fbar.files)
+let fbarDirInitialized = false; // prevent auto-reload on every re-render within a session
+
+// ── FBAR directory persistence (IndexedDB — handles survive page reloads) ──
+function fbarIDB(mode) {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('tp_fbar_fs', 1);
+    r.onupgradeneeded = e => e.target.result.createObjectStore('h');
+    r.onsuccess = e => res(e.target.result.transaction('h', mode).objectStore('h'));
+    r.onerror = rej;
+  });
+}
+async function fbarSaveDirHandle(handle) {
+  try { const s = await fbarIDB('readwrite'); await new Promise((r,j)=>{ const q=s.put(handle,'dir'); q.onsuccess=r; q.onerror=j; }); } catch {}
+}
+async function fbarLoadDirHandle() {
+  try { const s = await fbarIDB('readonly'); return await new Promise((r,j)=>{ const q=s.get('dir'); q.onsuccess=()=>r(q.result||null); q.onerror=j; }); } catch { return null; }
+}
+
+async function fbarLoadFromDir(handle) {
+  const fb = S.fbar;
+  const allowed = ['pdf','csv','xls','xlsx','png','jpg','jpeg','webp','gif'];
+  const newObjs = [], newMeta = [];
+  for await (const [name, fh] of handle.entries()) {
+    if (fh.kind !== 'file') continue;
+    const ext = name.split('.').pop().toLowerCase();
+    if (!allowed.includes(ext)) continue;
+    const file = await fh.getFile();
+    newObjs.push(file);
+    newMeta.push({ name, fileType: detectFbarFileType(file), matched: false });
+  }
+  fbarFileObjects = newObjs;
+  fb.files = newMeta;
+  saveFbarData(); render();
+}
+
+async function fbarSelectDir() {
+  if (!window.showDirectoryPicker) { alert('Folder auto-load requires Chrome or Edge.'); return; }
+  try {
+    const handle = await showDirectoryPicker({ mode: 'read' });
+    localStorage.setItem('fbar_dir_name', handle.name);
+    await fbarSaveDirHandle(handle);
+    fbarDirInitialized = true;
+    await fbarLoadFromDir(handle);
+  } catch(e) { if (e.name !== 'AbortError') console.error(e); }
+}
+
+async function fbarReloadDir() {
+  const handle = await fbarLoadDirHandle();
+  if (!handle) return;
+  const perm = await handle.queryPermission({ mode:'read' });
+  if (perm === 'granted') {
+    await fbarLoadFromDir(handle);
+  } else {
+    const granted = await handle.requestPermission({ mode:'read' });
+    if (granted === 'granted') await fbarLoadFromDir(handle);
+  }
+}
+
+async function fbarInitDir() {
+  if (fbarDirInitialized || fbarFileObjects.length > 0) return;
+  fbarDirInitialized = true;
+  const handle = await fbarLoadDirHandle();
+  if (!handle) return;
+  try {
+    const perm = await handle.queryPermission({ mode:'read' });
+    if (perm === 'granted') await fbarLoadFromDir(handle);
+  } catch {}
+}
 
 function detectFbarFileType(file) {
   const name = file.name.toLowerCase();
@@ -1369,6 +1437,23 @@ function renderFbar() {
 
     // Filer tabs
     + '<div style="border-bottom:1px solid #e5e7eb;display:flex;gap:0">' + filerTabs + '</div>'
+
+    // Folder auto-load row
+    + (function() {
+        const dirName = localStorage.getItem('fbar_dir_name');
+        if (dirName) {
+          return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:13px">'
+            + '<span style="color:#15803d">📁 ' + dirName + '</span>'
+            + '<button class="btn btn-ghost" style="font-size:12px;padding:3px 10px" id="fbarReloadDir">↺ Reload</button>'
+            + '<button class="btn btn-ghost" style="font-size:12px;padding:3px 10px" id="fbarChangeDir">Change…</button>'
+            + '</div>';
+        } else {
+          return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:13px">'
+            + '<span style="color:#9ca3af">No folder selected — files can be uploaded manually or auto-loaded from a folder.</span>'
+            + '<button class="btn btn-ghost" style="font-size:12px;padding:3px 10px" id="fbarSelectDir">📁 Select Folder…</button>'
+            + '</div>';
+        }
+      })()
 
     // Upload + file list card
     + '<div class="card">'
@@ -1742,6 +1827,17 @@ function attachFbarListeners() {
   // Export button
   const expBtn = document.getElementById('fbarExportBtn');
   if (expBtn) expBtn.addEventListener('click', () => { downloadFbarPDF(); });
+
+  // Folder auto-load buttons
+  const selDirBtn = document.getElementById('fbarSelectDir');
+  if (selDirBtn) selDirBtn.addEventListener('click', () => fbarSelectDir());
+  const relDirBtn = document.getElementById('fbarReloadDir');
+  if (relDirBtn) relDirBtn.addEventListener('click', () => fbarReloadDir());
+  const chgDirBtn = document.getElementById('fbarChangeDir');
+  if (chgDirBtn) chgDirBtn.addEventListener('click', () => { localStorage.removeItem('fbar_dir_name'); fbarSelectDir(); });
+
+  // Auto-load from persisted dir on first visit (silent — only if permission already granted)
+  fbarInitDir();
 }
 
 function addFbarUploadFiles(fileList) {
