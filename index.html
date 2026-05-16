@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.23';
+const APP_VERSION = '1.24';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1230,7 +1230,7 @@ function findAccountInText(accountName, fullText) {
     const score = hits/words.length;
     if (score > bestScore) { bestScore=score; bestPos=i; }
   }
-  if (bestScore < 0.3) return null;
+  if (bestScore <= 0.5) return null;
   const start = Math.max(0, bestPos-100);
   const end = Math.min(fullText.length, bestPos+WIN+400);
   const region = fullText.slice(start, end);
