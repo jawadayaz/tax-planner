@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.26';
+const APP_VERSION = '1.27';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1622,7 +1622,19 @@ function wordOverlap(a, b) {
   return wa.filter(w => wb.has(w)).length / Math.max(wa.length, wb.size);
 }
 
-function findBestAccountMatch(name, accounts) {
+function findBestAccountMatch(name, accounts, number) {
+  // Prefer exact account number match when available
+  if (number) {
+    const numDigits = String(number).replace(/[^0-9]/g,'');
+    if (numDigits.length >= 4) {
+      const byNum = accounts.find(a => {
+        const aDigits = (a.number || '').replace(/[^0-9]/g,'');
+        return aDigits.length >= 4 && aDigits.slice(-4) === numDigits.slice(-4);
+      });
+      if (byNum) return { acct: byNum, score: 1.0 };
+    }
+  }
+  // Fall back to name similarity
   let best = null, bestScore = 0;
   for (const acct of accounts) {
     const s = wordOverlap(name, acct.name);
@@ -1661,7 +1673,18 @@ async function runMatch() {
       fb.matchLog.push('  Found ' + parsed.length + ' account(s)');
       for (const p of parsed) {
         if (!p.name || String(p.name).trim().length < 2) continue;
-        const exists = newAccounts.find(a => wordOverlap(p.name, a.name) >= 0.6);
+        const pNum = (p.number || '').replace(/[^0-9]/g,'');
+        // Deduplicate: same if (a) same account number suffix (precise), or
+        // (b) same name AND neither has a meaningful account number (fuzzy only when no number)
+        const exists = newAccounts.find(a => {
+          const aNum = (a.number || '').replace(/[^0-9]/g,'');
+          if (pNum.length >= 4 && aNum.length >= 4) {
+            // Both have account numbers — must match (last 4 digits)
+            return pNum.slice(-4) === aNum.slice(-4);
+          }
+          // At least one has no number — fall back to name similarity only
+          return wordOverlap(p.name, a.name) >= 0.6 && !pNum && !aNum;
+        });
         if (!exists) {
           newAccounts.push({
             id: Math.random().toString(36).slice(2,8),
@@ -1688,7 +1711,7 @@ async function runMatch() {
       let matched = 0, added = 0;
       for (const row of rows) {
         if (!row.name) continue;
-        const m = findBestAccountMatch(row.name, newAccounts);
+        const m = findBestAccountMatch(row.name, newAccounts, row.number);
         if (m) {
           m.acct.newMax = row.balUSD;
           m.acct.status = 'matched';
