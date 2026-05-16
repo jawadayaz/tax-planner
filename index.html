@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.25';
+const APP_VERSION = '1.26';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1130,6 +1130,28 @@ function parseFbarTextAccounts(text) {
   return accounts;
 }
 
+// Scan statement text (header region) for a recognisable account number.
+// Returns the last-4-digit suffix string, or null if not found.
+function extractAccountSuffixFromText(text) {
+  // Search only the first 2000 chars (statement header)
+  const header = text.slice(0, 2000);
+  const lower = header.toLowerCase();
+  // Labels that precede account numbers in Indian bank/broker statements
+  const labelRe = /(?:a(?:cc(?:ount)?|\/c)[\s.:#-]*(?:no|number|num|#)?|account\s*(?:no|number|#))[\s.:# -]*/gi;
+  let m;
+  while ((m = labelRe.exec(lower)) !== null) {
+    const afterLabel = header.slice(m.index + m[0].length, m.index + m[0].length + 40);
+    // Strip spaces/dashes/Xs/asterisks to find the digits
+    const digits = afterLabel.replace(/[\sX*\-]/gi, '').match(/\d{4,}/);
+    if (digits) return digits[0].slice(-4);
+  }
+  // Fallback: look for a masked account pattern like XXXX1234 or ****1234 or XXXXXX1234
+  const maskedRe = /[X*]{4,}(\d{4})/gi;
+  const mf = maskedRe.exec(header);
+  if (mf) return mf[1];
+  return null;
+}
+
 function extractAmounts(text) {
   const results = [];
   const re = /(?:₹|Rs\.?\s*)?(\d{1,3}(?:,\d{2})*(?:,\d{3})|\d{4,})(?:\.\d{1,2})?(?!\d)/g;
@@ -1733,19 +1755,23 @@ async function runMatch() {
       let fileMatched = false;
       const rate = fb.fxRate || 84;
 
-      // Primary match: use account number from filename (e.g. XXXXXXXX6737 → last 4 = 6737)
-      // This is precise — one statement PDF belongs to exactly one account.
+      // ── Account number resolution (3-tier) ──────────────────────────────────
+      // Tier 1: filename pattern  e.g. XXXXXXXX6737_date.pdf → suffix "6737"
+      // Tier 2: statement header  parse "Account No: XXXX6737" from first 2 KB
+      // Tier 3: institution name  fuzzy name search (last resort)
       const fnDigits = file.name.match(/[X*]{4,}(\d{4})/i);
       const fileAcctSuffix = fnDigits ? fnDigits[1] : null;
-      const acctByNumber = fileAcctSuffix
-        ? newAccounts.find(a => a.number && a.number.replace(/[^0-9]/g,'').endsWith(fileAcctSuffix))
+      const textAcctSuffix = fileAcctSuffix ? null : extractAccountSuffixFromText(text);
+      const acctSuffix = fileAcctSuffix || textAcctSuffix;
+      const acctByNumber = acctSuffix
+        ? newAccounts.find(a => a.number && a.number.replace(/[^0-9]/g,'').endsWith(acctSuffix))
         : null;
+      const suffixSource = fileAcctSuffix ? 'filename' : textAcctSuffix ? 'header' : null;
 
       if (acctByNumber) {
-        // Targeted: extract the largest balance from the whole statement for this specific account
-        const allAmts = extractCurrencyAmounts(text).concat(extractAmounts(text)).sort((a,b) => b-a);
-        // Also try labeled amounts (NAV, closing balance, etc.)
+        // Targeted single-account extraction
         const labeled = extractLabeledAmounts(text).map(l => l.value).sort((a,b) => b-a);
+        const allAmts = extractCurrencyAmounts(text).concat(extractAmounts(text)).sort((a,b) => b-a);
         const peakBalance = labeled[0] || allAmts[0] || 0;
         if (peakBalance > 0) {
           const usdVal = Math.round(peakBalance / rate);
@@ -1753,12 +1779,15 @@ async function runMatch() {
             acctByNumber.newMax = usdVal;
             acctByNumber.source = 'from statement';
             if (acctByNumber.status === 'needs_update') acctByNumber.status = 'matched';
-            fb.matchLog.push('    ✓ [acct#' + fileAcctSuffix + '] ' + acctByNumber.name + ' — ' + fmtINR(peakBalance) + ' → ' + fmtUSD(usdVal));
+            fb.matchLog.push('    ✓ [' + suffixSource + ':****' + acctSuffix + '] ' + acctByNumber.name + ' — ' + fmtINR(peakBalance) + ' → ' + fmtUSD(usdVal));
             fileMatched = true;
           }
+        } else {
+          fb.matchLog.push('    ? [' + suffixSource + ':****' + acctSuffix + '] ' + acctByNumber.name + ' — no balance found in statement');
         }
       } else {
-        // Fallback: name-based search across all accounts (for statements without standard filename pattern)
+        // Tier 3: name-based search (no account number found anywhere)
+        if (acctSuffix) fb.matchLog.push('    ? suffix ****' + acctSuffix + ' not matched to any known account — falling back to name search');
         for (const acct of newAccounts) {
           const result = findAccountInText(acct.name, text);
           if (result && result.peakBalance > 0) {
@@ -1767,7 +1796,7 @@ async function runMatch() {
               acct.newMax = usdVal;
               acct.source = 'from statement';
               if (acct.status === 'needs_update') acct.status = 'matched';
-              fb.matchLog.push('    ✓ ' + acct.name + ' — ' + fmtINR(result.peakBalance) + ' → ' + fmtUSD(usdVal));
+              fb.matchLog.push('    ✓ [name] ' + acct.name + ' — ' + fmtINR(result.peakBalance) + ' → ' + fmtUSD(usdVal));
               fileMatched = true;
             }
           }
