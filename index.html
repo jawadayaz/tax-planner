@@ -128,7 +128,7 @@
 
 <script>
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.24';
+const APP_VERSION = '1.25';
 const FBAR_WORKER = 'https://tax-agent-worker.jawadayaz.workers.dev';
 const TODAY = new Date('2026-04-28');
 const CURRENT_YEAR = TODAY.getFullYear();
@@ -1732,16 +1732,44 @@ async function runMatch() {
       }
       let fileMatched = false;
       const rate = fb.fxRate || 84;
-      for (const acct of newAccounts) {
-        const result = findAccountInText(acct.name, text);
-        if (result && result.peakBalance > 0) {
-          const usdVal = Math.round(result.peakBalance / rate);
-          if (acct.newMax == null || usdVal > acct.newMax) {
-            acct.newMax = usdVal;
-            acct.source = 'from statement';
-            if (acct.status === 'needs_update') acct.status = 'matched';
-            fb.matchLog.push('    ✓ ' + acct.name + ' — ' + fmtINR(result.peakBalance) + ' → ' + fmtUSD(usdVal));
+
+      // Primary match: use account number from filename (e.g. XXXXXXXX6737 → last 4 = 6737)
+      // This is precise — one statement PDF belongs to exactly one account.
+      const fnDigits = file.name.match(/[X*]{4,}(\d{4})/i);
+      const fileAcctSuffix = fnDigits ? fnDigits[1] : null;
+      const acctByNumber = fileAcctSuffix
+        ? newAccounts.find(a => a.number && a.number.replace(/[^0-9]/g,'').endsWith(fileAcctSuffix))
+        : null;
+
+      if (acctByNumber) {
+        // Targeted: extract the largest balance from the whole statement for this specific account
+        const allAmts = extractCurrencyAmounts(text).concat(extractAmounts(text)).sort((a,b) => b-a);
+        // Also try labeled amounts (NAV, closing balance, etc.)
+        const labeled = extractLabeledAmounts(text).map(l => l.value).sort((a,b) => b-a);
+        const peakBalance = labeled[0] || allAmts[0] || 0;
+        if (peakBalance > 0) {
+          const usdVal = Math.round(peakBalance / rate);
+          if (acctByNumber.newMax == null || usdVal > acctByNumber.newMax) {
+            acctByNumber.newMax = usdVal;
+            acctByNumber.source = 'from statement';
+            if (acctByNumber.status === 'needs_update') acctByNumber.status = 'matched';
+            fb.matchLog.push('    ✓ [acct#' + fileAcctSuffix + '] ' + acctByNumber.name + ' — ' + fmtINR(peakBalance) + ' → ' + fmtUSD(usdVal));
             fileMatched = true;
+          }
+        }
+      } else {
+        // Fallback: name-based search across all accounts (for statements without standard filename pattern)
+        for (const acct of newAccounts) {
+          const result = findAccountInText(acct.name, text);
+          if (result && result.peakBalance > 0) {
+            const usdVal = Math.round(result.peakBalance / rate);
+            if (acct.newMax == null || usdVal > acct.newMax) {
+              acct.newMax = usdVal;
+              acct.source = 'from statement';
+              if (acct.status === 'needs_update') acct.status = 'matched';
+              fb.matchLog.push('    ✓ ' + acct.name + ' — ' + fmtINR(result.peakBalance) + ' → ' + fmtUSD(usdVal));
+              fileMatched = true;
+            }
           }
         }
       }
