@@ -269,7 +269,7 @@ const GLOBAL_WORKER_SECRET = '81bb75bce37a6d0f848df3afa7227cc9ad803b575f4887bc5b
 // ─── STATE ────────────────────────────────────────────────────────────────────
 // driveFiles: { jawad_chhaya: [{id,name},...], sakina: [...], ... } — keyed by member ID
 let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:{},
-  fbar: { filer:'jawad', year:2025, accounts:[], files:[], fxRate:null, pdfPasswords:[], matchRan:false, completed:false, balCurrency:'inr' }
+  fbar: { filer:'jawad', year:2025, accounts:[], files:[], fxRate:null, pdfPasswords:[], matchRan:false, completed:false, balCurrency:'inr', filerInfo:null, flags:[], passwordMap:{} }
 };
 
 // ─── FBAR PERSISTENCE ────────────────────────────────────────────────────────
@@ -287,6 +287,9 @@ function saveFbarData() {
       balCurrency: fb.balCurrency || 'inr',
       matchLog: fb.matchLog || [],
       pdfPasswords: fb.pdfPasswords || [],
+      filerInfo: fb.filerInfo || null,
+      flags: fb.flags || [],
+      passwordMap: fb.passwordMap || {},
     };
     localStorage.setItem('tp_fbar', JSON.stringify(all));
   } catch(e) {}
@@ -301,7 +304,10 @@ function loadFbarData(filer, year) {
         fxRate: saved.fxRate || null, files: [], // File objects don't survive page reload — always start fresh
         matchRan: saved.matchRan || false, completed: saved.completed || false,
         balCurrency: saved.balCurrency || 'inr', matchLog: saved.matchLog || [],
-        pdfPasswords: saved.pdfPasswords || [] };
+        pdfPasswords: saved.pdfPasswords || [],
+        filerInfo: saved.filerInfo || null,
+        flags: saved.flags || [],
+        passwordMap: saved.passwordMap || {} };
     }
     // Carry accounts forward from previous completed year
     const prev = all[filer]?.[year - 1];
@@ -312,10 +318,11 @@ function loadFbarData(filer, year) {
         newMax: null, status: 'needs_update', source: null,
       }));
       return { filer, year, accounts: carried, fxRate: null, files: [], matchRan: false,
-        completed: false, _carriedFrom: year - 1, balCurrency: 'inr', matchLog: [] };
+        completed: false, _carriedFrom: year - 1, balCurrency: 'inr', matchLog: [],
+        filerInfo: null, flags: [], passwordMap: {} };
     }
   } catch(e) {}
-  return { filer, year, accounts: [], files: [], fxRate: null, matchRan: false, completed: false, balCurrency: 'inr', matchLog: [] };
+  return { filer, year, accounts: [], files: [], fxRate: null, matchRan: false, completed: false, balCurrency: 'inr', matchLog: [], filerInfo: null, flags: [], passwordMap: {} };
 }
 
 function switchFbarFiler(filerId) {
@@ -1046,6 +1053,159 @@ function tryParseXFAAccounts(text) {
   return accounts;
 }
 
+// Rich XFA parse — returns full fields needed for PDF writing
+function tryParseXFAAccountsRich(text) {
+  if (!text || !text.includes('ffbar:BSAForm')) return [];
+  const ns = 'http://www.fincen.gov/bsa/ffbar/2011-06-01';
+  const doc = new DOMParser().parseFromString(text, 'text/xml');
+  function xget(el, localName) {
+    const byNS = el.getElementsByTagNameNS(ns, localName);
+    if (byNS.length) return byNS[0].textContent?.trim() || '';
+    const byPfx = el.getElementsByTagName('ffbar:'+localName);
+    if (byPfx.length) return byPfx[0].textContent?.trim() || '';
+    const byBare = el.getElementsByTagName(localName);
+    if (byBare.length) return byBare[0].textContent?.trim() || '';
+    return '';
+  }
+  function getUccVal(el, name) {
+    const byPfx = el.getElementsByTagName('ucc:' + name);
+    if (byPfx.length) return byPfx[0].textContent?.trim() || '';
+    const all = el.getElementsByTagName('*');
+    for (const n of all) { if (n.localName === name) return n.textContent?.trim() || ''; }
+    return '';
+  }
+  const accounts = [];
+  const TAGS = ['FinAcctOwnedSeparately','FinAcctOwnedJointly','FinAcctSigAuth','NoFinInterestFinAcctOwned'];
+  for (const tag of TAGS) {
+    const ownership = tag === 'FinAcctOwnedSeparately' ? 'sole'
+                    : tag === 'FinAcctOwnedJointly' ? 'joint'
+                    : tag === 'FinAcctSigAuth' ? 'sigauth' : 'noint';
+    const els = doc.getElementsByTagNameNS(ns, tag).length
+      ? doc.getElementsByTagNameNS(ns, tag) : doc.getElementsByTagName('ffbar:'+tag);
+    for (const el of els) {
+      const name = xget(el, 'FinInstName');
+      if (!name) continue;
+      const rawNum = xget(el, 'AccntNumber');
+      // Strip parenthetical from account number before extracting suffix
+      const cleanNum = rawNum.replace(/\s*\(.*/, '').trim();
+      const digits = cleanNum.replace(/\D/g,'');
+      const suffix = digits.length >= 4 ? digits.slice(-4) : '';
+      const acctTypeCode = xget(el, 'AccountType'); // raw letter B, S, M, Z
+      const TYPE_MAP = { A:'bank', B:'bank', S:'brokerage', M:'mf', Z:'other', C:'other' };
+      const typeWord = TYPE_MAP[acctTypeCode] || 'other';
+
+      // Address fields from ucc: children
+      let addr = '', city = '', state = '', zip = '', country = '';
+      const addrEls = el.getElementsByTagNameNS ? el.getElementsByTagNameNS('*','Address') : [];
+      // Try to find ffbar:Address element
+      const addrEl = (function() {
+        const byPfx = el.getElementsByTagName('ffbar:Address');
+        if (byPfx.length) return byPfx[0];
+        const byNS = el.getElementsByTagNameNS(ns, 'Address');
+        if (byNS.length) return byNS[0];
+        return null;
+      })();
+      if (addrEl) {
+        addr = getUccVal(addrEl, 'Address');
+        city = getUccVal(addrEl, 'City');
+        state = getUccVal(addrEl, 'State');
+        zip = getUccVal(addrEl, 'ZIP');
+        country = getUccVal(addrEl, 'Country');
+      }
+
+      // Joint owner fields
+      let n_joint_owners = '', joint_tin = '', joint_tin_type = '', joint_last = '', joint_first = '', joint_country = '';
+      const jointEl = (function() {
+        const byPfx = el.getElementsByTagName('ffbar:PrincipalJointOwner');
+        if (byPfx.length) return byPfx[0];
+        const byNS = el.getElementsByTagNameNS(ns, 'PrincipalJointOwner');
+        if (byNS.length) return byNS[0];
+        return null;
+      })();
+      if (jointEl) {
+        n_joint_owners = xget(el, 'NOofJointOwners') || xget(jointEl, 'NOofJointOwners');
+        joint_tin = xget(jointEl, 'TIN');
+        joint_tin_type = xget(jointEl, 'TINType');
+        joint_last = xget(jointEl, 'IndividualLastName') || xget(jointEl, 'LastName');
+        joint_first = xget(jointEl, 'IndividualFirstName') || xget(jointEl, 'FirstName');
+        const jaddrEl = (function() {
+          const byPfx = jointEl.getElementsByTagName('ffbar:Address');
+          if (byPfx.length) return byPfx[0];
+          const byNS = jointEl.getElementsByTagNameNS(ns, 'Address');
+          if (byNS.length) return byNS[0];
+          return null;
+        })();
+        if (jaddrEl) joint_country = getUccVal(jaddrEl, 'Country');
+      }
+
+      const maxv = parseFloat(xget(el, 'MaximumAccntValue') || '0');
+      accounts.push({
+        block_type: tag,
+        name,
+        number: suffix ? '****' + suffix : rawNum || '????',
+        suffix,
+        type: typeWord,
+        acct_type_code: acctTypeCode,
+        ownership,
+        max_value_usd: maxv,
+        other_desc: xget(el, 'OtherDesc') || xget(el, 'OtherAcctType'),
+        addr, city, state, zip, country,
+        n_joint_owners, joint_tin, joint_tin_type,
+        joint_last, joint_first, joint_country,
+      });
+    }
+  }
+  return accounts;
+}
+
+// Parse filer info from XFA text using regex (DOMParser can have namespace issues with XFA)
+function parseFilerInfoXFA(text) {
+  if (!text || !text.includes('ffbar:FilerInformation')) return null;
+  function getTag(block, name, prefix) {
+    prefix = prefix || 'ffbar';
+    const re = new RegExp('<' + prefix + ':' + name + '[^>]*>(.*?)</' + prefix + ':' + name + '>', 's');
+    const m = block.match(re);
+    return m ? m[1].trim() : '';
+  }
+  function getUcc(block, name) {
+    const re = new RegExp('<ucc:' + name + '[^>]*>(.*?)</ucc:' + name + '>', 's');
+    const m = block.match(re);
+    return m ? m[1].trim() : '';
+  }
+  // Extract filing name and derive base
+  const rawFiling = getTag(text, 'FilingName', 'est');
+  const filingBase = rawFiling.replace(/\s*\bFBAR\b\s*/gi,' ').replace(/\s*\d{4}\s*/g,' ').trim();
+  // Extract filing type and submit URL
+  const filing_type = getTag(text, 'FilingType', 'est');
+  const submit_url = getTag(text, 'SubmitUrl', 'est') || getTag(text, 'SubmitURL', 'est');
+  // Extract filer info block
+  const filerM = text.match(/<ffbar:FilerInformation[\s\S]*?<\/ffbar:FilerInformation>/);
+  if (!filerM) return null;
+  const fblock = filerM[0];
+  const tin = getTag(fblock, 'TIN');
+  const tin_type = getTag(fblock, 'TINType');
+  const dob = getTag(fblock, 'DateOfBirth') || getTag(fblock, 'DOB');
+  const last_name = getTag(fblock, 'IndividualLastName') || getTag(fblock, 'LastName');
+  const first_name = getTag(fblock, 'IndividualFirstName') || getTag(fblock, 'FirstName');
+  const middle_name = getTag(fblock, 'MiddleName') || getTag(fblock, 'IndividualMiddleName');
+  const suffix_filer = getTag(fblock, 'Suffix') || getTag(fblock, 'IndividualSuffix');
+  const type_of_filer = getTag(fblock, 'TypeOfFiler');
+  // Address
+  const addr = getUcc(fblock, 'Address');
+  const city = getUcc(fblock, 'City');
+  const state = getUcc(fblock, 'State');
+  const zip = getUcc(fblock, 'ZIP');
+  const country = getUcc(fblock, 'Country');
+  return {
+    filing_name_base: filingBase,
+    filing_type, submit_url,
+    tin, tin_type, dob,
+    last_name, first_name, middle_name, suffix_filer,
+    type_of_filer,
+    addr, city, state, zip, country,
+  };
+}
+
 // Parse FBAR accounts from plain PDF text (fallback when XFA not present).
 // Handles FinCEN 114 PDFs exported from BSA e-filing (field-label/value layout).
 function parseFbarTextAccounts(text) {
@@ -1535,10 +1695,21 @@ function renderFbar() {
         : '<div style="text-align:center;padding:32px;color:#9ca3af;font-size:13px">No accounts yet. Run Match to extract from files, or add manually.</div>')
     + '</div>'
 
-    // Export
+    // Flags section (password-protected + unmatched statements)
+    + (fb.flags && fb.flags.length
+        ? '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px 16px">'
+          + '<div style="font-size:13px;font-weight:600;color:#c2410c;margin-bottom:8px">⚠ Statements Requiring Attention</div>'
+          + fb.flags.map(f => '<div style="font-size:12.5px;color:#9a3412;padding:2px 0">****' + (f.suffix||'????') + ' — ' + f.reason + ' <span style="color:#9ca3af">[' + f.file + ']</span></div>').join('')
+          + '</div>'
+        : '')
+
+    // Export buttons
     + (canExport
-        ? '<div style="display:flex;gap:10px">'
-          + '<button class="btn btn-primary" id="fbarExportBtn">⬇ Export FBAR Summary PDF</button>'
+        ? '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'
+          + (hasPrevFbar
+              ? '<button class="btn btn-primary" id="fbarGeneratePdfBtn">⬇ Generate FBAR PDF</button>'
+              : '<button class="btn btn-ghost" style="font-size:12px" id="fbarGeneratePdfBtn" disabled title="Upload prev FBAR PDF first">⬇ Generate FBAR PDF (upload prev FBAR first)</button>')
+          + '<button class="btn btn-ghost" id="fbarExportBtn">Export Reference Summary</button>'
           + (fb.completed ? '<span style="font-size:12px;color:#16a34a;align-self:center">✓ Marked complete</span>' : '')
           + '</div>'
         : '')
@@ -1613,6 +1784,102 @@ async function parseSummaryFile(file) {
   return rows;
 }
 
+async function parseSummaryFileRich(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  const rows = [];
+  const passwordMap = {};
+  if (ext === 'csv' || ext === 'xls' || ext === 'xlsx') {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+    if (data.length < 2) return { rows, passwordMap };
+    // Find header row (first row with >2 non-empty cells)
+    let hdrIdx = 0;
+    for (let r = 0; r < Math.min(5, data.length); r++) {
+      if (data[r].filter(c => String(c).trim()).length > 2) { hdrIdx = r; break; }
+    }
+    const hdrs = data[hdrIdx].map(h => String(h).toLowerCase());
+    const col = keys => { for (const k of keys) { const i = hdrs.findIndex(h => h.includes(k)); if (i>=0) return i; } return -1; };
+    // Balance column: look for 2025 inr/usd, usd, balance, value, amount, or nav
+    const ci = {
+      name:      col(['institution','bank name','account name','name']),
+      number:    col(['acct number','acct no','account number','account#','acct#','number']),
+      type:      col(['account type','type','category']),
+      ownership: col(['ownership','owner','joint']),
+      balance:   (function() {
+        // Priority order
+        const checks = [
+          h => /2025\s*inr[\s/]*usd/.test(h),
+          h => h.includes('usd'),
+          h => h.includes('balance'),
+          h => h.includes('value'),
+          h => h.includes('amount'),
+          h => h.includes('nav'),
+        ];
+        for (const check of checks) {
+          const i = hdrs.findIndex(check);
+          if (i >= 0) return i;
+        }
+        return -1;
+      })(),
+      password:  col(['password','pwd','pass','pdf password','statement password']),
+    };
+    // Extract FX rate from headers if present
+    let csvRate = null;
+    for (const h of hdrs) {
+      const m = h.match(/rate[=:]\s*[₹rs]*\s*([\d.]+)/);
+      if (m) { csvRate = parseFloat(m[1]); break; }
+    }
+    if (csvRate && !S.fbar.fxRate) S.fbar.fxRate = csvRate;
+    const useRate = csvRate || S.fbar.fxRate || 84;
+    for (let r = hdrIdx + 1; r < data.length; r++) {
+      const row = data[r];
+      if (row.every(c => !String(c).trim())) continue;
+      const name = ci.name >= 0 ? String(row[ci.name] || '').trim() : '';
+      if (!name || name.length < 2) continue;
+      const numStr = ci.balance >= 0 ? String(row[ci.balance] || '').replace(/[,₹$\s]/g,'') : '';
+      let balUSD = null;
+      if (numStr) {
+        const n = parseFloat(numStr);
+        if (!isNaN(n) && n > 0) {
+          balUSD = n > 500 * useRate ? Math.round(n / useRate) : Math.round(n);
+        }
+      }
+      const rawType = ci.type >= 0 ? String(row[ci.type] || '').toLowerCase() : '';
+      const type = rawType.includes('broker') || rawType.includes('demat') ? 'brokerage'
+                 : rawType.includes('mutual') || rawType.includes('mf') ? 'mf'
+                 : 'bank';
+      const rawOwn = ci.ownership >= 0 ? String(row[ci.ownership] || '').toLowerCase() : '';
+      const ownership = rawOwn.includes('joint') ? 'joint' : rawOwn.includes('sig') ? 'sigauth' : 'sole';
+      const number = ci.number >= 0 ? String(row[ci.number] || '').trim() : '';
+      const password = ci.password >= 0 ? String(row[ci.password] || '').trim() : '';
+      // Extract suffix from account number
+      const numDigits = number.replace(/\D/g,'');
+      const suffix = numDigits.length >= 4 ? numDigits.slice(-4) : '';
+      // Build passwordMap keyed by suffix
+      if (suffix && password) {
+        if (!passwordMap[suffix]) passwordMap[suffix] = [];
+        if (!passwordMap[suffix].includes(password)) passwordMap[suffix].push(password);
+      }
+      rows.push({ name, number, suffix, type, ownership, balUSD, password });
+    }
+  }
+  return { rows, passwordMap };
+}
+
+function extractInstitutionFromText(text) {
+  const lines = text.split('\n').slice(0, 20);
+  for (const line of lines) {
+    const l = line.trim();
+    if (l.length <= 4) continue;
+    if (/^\d/.test(l)) continue;
+    if (/statement|account/i.test(l)) continue;
+    return l;
+  }
+  return '';
+}
+
 function wordOverlap(a, b) {
   if (!a || !b) return 0;
   const norm = s => String(s).toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
@@ -1647,6 +1914,7 @@ async function runMatch() {
   const fb = S.fbar;
   fb.matchLog = [];
   fb.matchRan = false;
+  fb.flags = [];
 
   if (fbarFileObjects.length === 0) {
     fb.matchLog.push('No files loaded — please upload files first.');
@@ -1656,40 +1924,55 @@ async function runMatch() {
 
   // Split file objects by type
   const prevFbarObjs   = fbarFileObjects.filter((_, i) => fb.files[i]?.fileType === 'prev_fbar');
+  const prevFbarMeta   = fb.files.map((f, i) => f.fileType === 'prev_fbar' ? i : -1).filter(i => i >= 0);
   const summaryObjs    = fbarFileObjects.filter((_, i) => fb.files[i]?.fileType === 'summary');
   const statementObjs  = fbarFileObjects.filter((_, i) => fb.files[i]?.fileType === 'statement');
   const statementMeta  = fb.files.map((f, i) => f.fileType === 'statement' ? i : -1).filter(i => i >= 0);
 
-  // ── Step 1: extract accounts from prev FBAR ──
-  let newAccounts = fb.accounts.filter(a => a.status === 'manual').map(a => ({...a}));
+  // ── Step 1: extract accounts from prev FBAR (rich) ──
+  let baseAccounts = fb.accounts.filter(a => a.status === 'manual').map(a => ({...a}));
   fb.matchLog.push('Step 1 — Parsing prev year FBAR(s)…');
   render();
 
-  for (const file of prevFbarObjs) {
+  let filerInfoSet = false;
+  for (let pi = 0; pi < prevFbarObjs.length; pi++) {
+    const file = prevFbarObjs[pi];
     try {
       fb.matchLog.push('  Reading ' + file.name + '…'); render();
       const text = await extractTextFromFile(file);
-      const parsed = tryParseXFAAccounts(text) || parseFbarTextAccounts(text);
+      // Parse filer info from first FBAR only
+      if (!filerInfoSet) {
+        const fi = parseFilerInfoXFA(text);
+        if (fi) { fb.filerInfo = fi; filerInfoSet = true; }
+      }
+      // Use rich parse for full fields
+      const richParsed = tryParseXFAAccountsRich(text);
+      const parsed = richParsed.length > 0 ? richParsed : (tryParseXFAAccounts(text).length > 0 ? tryParseXFAAccounts(text).map(p => ({...p, block_type:'FinAcctOwnedSeparately', acct_type_code:'B', suffix:'', addr:'', city:'', state:'', zip:'', country:'', n_joint_owners:'', joint_tin:'', joint_tin_type:'', joint_last:'', joint_first:'', joint_country:''})) : parseFbarTextAccounts(text).map(p => ({...p, block_type:'FinAcctOwnedSeparately', acct_type_code:'B', suffix:'', addr:'', city:'', state:'', zip:'', country:'', n_joint_owners:'', joint_tin:'', joint_tin_type:'', joint_last:'', joint_first:'', joint_country:''})));
       fb.matchLog.push('  Found ' + parsed.length + ' account(s)');
       for (const p of parsed) {
         if (!p.name || String(p.name).trim().length < 2) continue;
-        const pNum = (p.number || '').replace(/[^0-9]/g,'');
-        // Deduplicate: same if (a) same account number suffix (precise), or
-        // (b) same name AND neither has a meaningful account number (fuzzy only when no number)
-        const exists = newAccounts.find(a => {
-          const aNum = (a.number || '').replace(/[^0-9]/g,'');
-          if (pNum.length >= 4 && aNum.length >= 4) {
-            // Both have account numbers — must match (last 4 digits)
-            return pNum.slice(-4) === aNum.slice(-4);
+        const pSuffix = p.suffix || (p.number || '').replace(/[^0-9]/g,'').slice(-4);
+        const exists = baseAccounts.find(a => {
+          const aSuffix = a.suffix || (a.number || '').replace(/[^0-9]/g,'').slice(-4);
+          if (pSuffix.length >= 4 && aSuffix.length >= 4) {
+            return pSuffix === aSuffix;
           }
-          // At least one has no number — fall back to name similarity only
-          return wordOverlap(p.name, a.name) >= 0.6 && !pNum && !aNum;
+          return wordOverlap(p.name, a.name) >= 0.6 && !pSuffix && !aSuffix;
         });
         if (!exists) {
-          newAccounts.push({
+          baseAccounts.push({
             id: Math.random().toString(36).slice(2,8),
-            name: String(p.name).trim(), type: p.type || 'bank', number: p.number || '',
+            name: String(p.name).trim(),
+            type: p.type || 'bank',
+            number: p.number || '',
+            suffix: pSuffix,
             ownership: p.ownership || 'sole',
+            block_type: p.block_type || 'FinAcctOwnedSeparately',
+            acct_type_code: p.acct_type_code || 'B',
+            other_desc: p.other_desc || '',
+            addr: p.addr || '', city: p.city || '', state: p.state || '', zip: p.zip || '', country: p.country || '',
+            n_joint_owners: p.n_joint_owners || '', joint_tin: p.joint_tin || '', joint_tin_type: p.joint_tin_type || '',
+            joint_last: p.joint_last || '', joint_first: p.joint_first || '', joint_country: p.joint_country || '',
             prevMax: p.max_value_usd || null,
             newMax: null, status: 'needs_update', source: null, include: true,
           });
@@ -1697,46 +1980,68 @@ async function runMatch() {
       }
     } catch(e) { fb.matchLog.push('  Error: ' + e.message); }
   }
-  fb.matchLog.push('  Total after FBAR parse: ' + newAccounts.length + ' account(s)');
+  fb.matchLog.push('  Total after FBAR parse: ' + baseAccounts.length + ' account(s)');
 
-  // ── Step 2: match with summary ──
+  // ── Step 2: match with summary (CSV — priority 2, can be overridden by statement) ──
   fb.matchLog.push('\nStep 2 — Matching with summary file(s)…');
   render();
 
   for (const file of summaryObjs) {
     try {
       fb.matchLog.push('  Reading ' + file.name + '…'); render();
-      const rows = await parseSummaryFile(file);
+      const { rows, passwordMap } = await parseSummaryFileRich(file);
+      // Merge passwordMap into fb.passwordMap
+      for (const [sfx, pwds] of Object.entries(passwordMap)) {
+        if (!fb.passwordMap[sfx]) fb.passwordMap[sfx] = [];
+        for (const pwd of pwds) { if (!fb.passwordMap[sfx].includes(pwd)) fb.passwordMap[sfx].push(pwd); }
+      }
+      // Collect all passwords into fb.pdfPasswords
+      const allPwds = Object.values(passwordMap).flat();
+      for (const pwd of allPwds) { if (pwd && !fb.pdfPasswords.includes(pwd)) fb.pdfPasswords.push(pwd); }
       fb.matchLog.push('  Found ' + rows.length + ' row(s) in summary');
       let matched = 0, added = 0;
       for (const row of rows) {
         if (!row.name) continue;
-        const m = findBestAccountMatch(row.name, newAccounts, row.number);
+        // Match by suffix first, then name
+        const m = findBestAccountMatch(row.name, baseAccounts, row.number);
         if (m) {
-          m.acct.newMax = row.balUSD;
-          m.acct.status = 'matched';
-          m.acct.source = 'from summary';
+          // Only set newMax from CSV if newMax is currently null (statement will override later)
+          if (m.acct.newMax == null) {
+            m.acct.newMax = row.balUSD;
+            m.acct.status = 'matched';
+            m.acct.source = 'csv';
+          }
           if (row.number && !m.acct.number) m.acct.number = row.number;
+          if (row.suffix && !m.acct.suffix) m.acct.suffix = row.suffix;
           if (row.type) m.acct.type = row.type;
           fb.matchLog.push('  ✓ ' + row.name + (row.balUSD ? ' → ' + fmtUSD(row.balUSD) : ''));
           matched++;
         } else {
-          newAccounts.push({
+          const ownership = row.ownership || 'sole';
+          baseAccounts.push({
             id: Math.random().toString(36).slice(2,8),
             name: row.name, type: row.type || 'bank', number: row.number || '',
-            ownership: row.ownership || 'sole',
+            suffix: row.suffix || '',
+            ownership,
+            block_type: ownership === 'joint' ? 'FinAcctOwnedJointly' : 'FinAcctOwnedSeparately',
+            acct_type_code: row.type === 'brokerage' ? 'S' : row.type === 'mf' ? 'M' : 'B',
+            other_desc: '', addr: '', city: '', state: '', zip: '', country: '',
+            n_joint_owners: '', joint_tin: '', joint_tin_type: '', joint_last: '', joint_first: '', joint_country: '',
             prevMax: null, newMax: row.balUSD,
-            status: 'new', source: 'from summary', include: true,
+            status: 'new', source: 'csv', include: true,
           });
           fb.matchLog.push('  + New: ' + row.name + (row.balUSD ? ' ' + fmtUSD(row.balUSD) : ''));
           added++;
         }
       }
-      fb.matchLog.push('  Summary: ' + matched + ' matched, ' + added + ' new, ' + newAccounts.filter(a=>a.status==='needs_update').length + ' needs update');
+      fb.matchLog.push('  Summary: ' + matched + ' matched, ' + added + ' new, ' + baseAccounts.filter(a=>a.status==='needs_update').length + ' needs update');
     } catch(e) { fb.matchLog.push('  Error: ' + e.message); }
   }
 
-  // ── Step 3: process statements ──
+  // ── Step 3: process statements (priority 1 — overrides CSV) ──
+  const allKnownSuffixes = new Set(baseAccounts.map(a => a.suffix).filter(s => s && s.length === 4));
+  const newAcctsFromStmts = [];
+
   if (statementObjs.length > 0) {
     fb.matchLog.push('\nStep 3 — Processing statement(s)…');
     render();
@@ -1748,7 +2053,20 @@ async function runMatch() {
     fb.matchLog.push('  ' + file.name + '…'); render();
     try {
       let text = '';
+      let isProtected = false;
       const ext = file.name.split('.').pop().toLowerCase();
+
+      // Detect filename suffix
+      const fnM = file.name.match(/[X*]{4,}(\d{4})/i);
+      const filenameSuffix = fnM ? fnM[1] : null;
+
+      // Build passwords to try: suffix-specific first, then all known passwords
+      const passwordsToTry = [];
+      if (filenameSuffix && fb.passwordMap[filenameSuffix]) {
+        for (const p of fb.passwordMap[filenameSuffix]) { if (!passwordsToTry.includes(p)) passwordsToTry.push(p); }
+      }
+      for (const p of (fb.pdfPasswords || [])) { if (!passwordsToTry.includes(p)) passwordsToTry.push(p); }
+
       if (['png','jpg','jpeg','webp','gif'].includes(ext)) {
         if (typeof Tesseract === 'undefined') throw new Error('OCR not loaded');
         const result = await Tesseract.recognize(file, 'eng', {
@@ -1756,68 +2074,111 @@ async function runMatch() {
         });
         text = result.data.text;
       } else {
-        // Try without password first; if protected, try each stored password
+        // Try with no password first
         try {
+          extractTextFromFile._pwd = '';
           text = await extractTextFromFile(file);
         } catch(pwdErr) {
-          if (pwdErr.message && pwdErr.message.toLowerCase().includes('password')) {
-            const passwords = fb.pdfPasswords || [];
+          const isPwdErr = pwdErr.message?.toLowerCase().includes('password') || pwdErr.name === 'PasswordException' || pwdErr.code === 1;
+          if (isPwdErr) {
+            isProtected = true;
             let opened = false;
-            for (const pwd of passwords) {
+            for (const pwd of passwordsToTry) {
               try {
                 extractTextFromFile._pwd = pwd;
                 text = await extractTextFromFile(file);
-                fb.matchLog.push('    (unlocked with stored password)');
+                fb.matchLog.push('    (unlocked with password)');
                 opened = true; break;
               } catch { /* try next */ }
             }
-            if (!opened) throw new Error('Password-protected — no matching password found in summary');
+            if (!opened) {
+              // Flag the file
+              const hasCsvEntry = filenameSuffix && allKnownSuffixes.has(filenameSuffix);
+              const csvEntryHasBlankPwd = hasCsvEntry && !passwordsToTry.length;
+              let reason;
+              if (!hasCsvEntry) reason = 'PASSWORD PROTECTED — no matching CSV entry';
+              else if (csvEntryHasBlankPwd) reason = 'PASSWORD PROTECTED — CSV entry exists but password column is blank';
+              else reason = 'PASSWORD PROTECTED — wrong password';
+              fb.flags.push({ type: 'password_protected', suffix: filenameSuffix, file: file.name, reason });
+              if (metaIdx >= 0) fb.files[metaIdx].flag = reason;
+              fb.matchLog.push('    ⚠ ' + reason);
+              continue;
+            }
           } else { throw pwdErr; }
         }
       }
+
       let fileMatched = false;
       const rate = fb.fxRate || 84;
 
-      // ── Account number resolution (3-tier) ──────────────────────────────────
-      // Tier 1: filename pattern  e.g. XXXXXXXX6737_date.pdf → suffix "6737"
-      // Tier 2: statement header  parse "Account No: XXXX6737" from first 2 KB
-      // Tier 3: institution name  fuzzy name search (last resort)
-      const fnDigits = file.name.match(/[X*]{4,}(\d{4})/i);
-      const fileAcctSuffix = fnDigits ? fnDigits[1] : null;
-      const textAcctSuffix = fileAcctSuffix ? null : extractAccountSuffixFromText(text);
-      const acctSuffix = fileAcctSuffix || textAcctSuffix;
+      // Extract suffix from text if not in filename
+      const textAcctSuffix = filenameSuffix ? null : extractAccountSuffixFromText(text);
+      const acctSuffix = filenameSuffix || textAcctSuffix;
+      const suffixSource = filenameSuffix ? 'filename' : textAcctSuffix ? 'header' : null;
+
       const acctByNumber = acctSuffix
-        ? newAccounts.find(a => a.number && a.number.replace(/[^0-9]/g,'').endsWith(acctSuffix))
+        ? baseAccounts.find(a => {
+            const aSuffix = a.suffix || (a.number || '').replace(/[^0-9]/g,'').slice(-4);
+            return aSuffix === acctSuffix;
+          })
         : null;
-      const suffixSource = fileAcctSuffix ? 'filename' : textAcctSuffix ? 'header' : null;
 
       if (acctByNumber) {
-        // Targeted single-account extraction
+        // Targeted single-account extraction — statement overrides everything
         const labeled = extractLabeledAmounts(text).map(l => l.value).sort((a,b) => b-a);
         const allAmts = extractCurrencyAmounts(text).concat(extractAmounts(text)).sort((a,b) => b-a);
         const peakBalance = labeled[0] || allAmts[0] || 0;
         if (peakBalance > 0) {
           const usdVal = Math.round(peakBalance / rate);
-          if (acctByNumber.newMax == null || usdVal > acctByNumber.newMax) {
-            acctByNumber.newMax = usdVal;
-            acctByNumber.source = 'from statement';
-            if (acctByNumber.status === 'needs_update') acctByNumber.status = 'matched';
-            fb.matchLog.push('    ✓ [' + suffixSource + ':****' + acctSuffix + '] ' + acctByNumber.name + ' — ' + fmtINR(peakBalance) + ' → ' + fmtUSD(usdVal));
-            fileMatched = true;
-          }
+          // Statement overrides regardless of current value
+          acctByNumber.newMax = usdVal;
+          acctByNumber.source = 'statement';
+          if (acctByNumber.status === 'needs_update') acctByNumber.status = 'matched';
+          fb.matchLog.push('    ✓ [' + suffixSource + ':****' + acctSuffix + '] ' + acctByNumber.name + ' — ' + fmtINR(peakBalance) + ' → ' + fmtUSD(usdVal));
+          fileMatched = true;
         } else {
           fb.matchLog.push('    ? [' + suffixSource + ':****' + acctSuffix + '] ' + acctByNumber.name + ' — no balance found in statement');
         }
       } else {
-        // Tier 3: name-based search (no account number found anywhere)
-        if (acctSuffix) fb.matchLog.push('    ? suffix ****' + acctSuffix + ' not matched to any known account — falling back to name search');
-        for (const acct of newAccounts) {
-          const result = findAccountInText(acct.name, text);
-          if (result && result.peakBalance > 0) {
-            const usdVal = Math.round(result.peakBalance / rate);
-            if (acct.newMax == null || usdVal > acct.newMax) {
+        // Suffix found but not in any account — track for new account
+        if (acctSuffix && !allKnownSuffixes.has(acctSuffix)) {
+          const labeled = extractLabeledAmounts(text).map(l => l.value).sort((a,b) => b-a);
+          const allAmts = extractCurrencyAmounts(text).concat(extractAmounts(text)).sort((a,b) => b-a);
+          const peakBalance = labeled[0] || allAmts[0] || 0;
+          if (!isProtected && peakBalance > 0) {
+            const usdVal = Math.round(peakBalance / rate);
+            const existsInNew = newAcctsFromStmts.find(a => a.suffix === acctSuffix);
+            if (!existsInNew) {
+              const instName = extractInstitutionFromText(text);
+              newAcctsFromStmts.push({
+                id: Math.random().toString(36).slice(2,8),
+                name: instName || ('Account ****' + acctSuffix),
+                suffix: acctSuffix,
+                number: '****' + acctSuffix,
+                type: 'bank', ownership: 'sole',
+                block_type: 'FinAcctOwnedSeparately',
+                acct_type_code: 'B',
+                country: 'IN',
+                other_desc: '', addr: '', city: '', state: '', zip: '',
+                n_joint_owners: '', joint_tin: '', joint_tin_type: '', joint_last: '', joint_first: '', joint_country: '',
+                prevMax: null, newMax: usdVal,
+                status: 'new', source: 'statement (new)', include: true,
+              });
+              fb.matchLog.push('    + New from statement: ****' + acctSuffix + ' — ' + fmtUSD(usdVal));
+              fileMatched = true;
+            }
+          }
+        }
+        if (!fileMatched) {
+          // Fallback to name-based search
+          if (acctSuffix) fb.matchLog.push('    ? suffix ****' + acctSuffix + ' not matched to any known account — falling back to name search');
+          for (const acct of baseAccounts) {
+            const result = findAccountInText(acct.name, text);
+            if (result && result.peakBalance > 0) {
+              const usdVal = Math.round(result.peakBalance / rate);
+              // Statement overrides
               acct.newMax = usdVal;
-              acct.source = 'from statement';
+              acct.source = 'statement';
               if (acct.status === 'needs_update') acct.status = 'matched';
               fb.matchLog.push('    ✓ [name] ' + acct.name + ' — ' + fmtINR(result.peakBalance) + ' → ' + fmtUSD(usdVal));
               fileMatched = true;
@@ -1830,7 +2191,14 @@ async function runMatch() {
     } catch(e) { fb.matchLog.push('  Error: ' + e.message); }
   }
 
-  fb.accounts = newAccounts;
+  // Add new accounts discovered from statements (if suffix not already present)
+  for (const na of newAcctsFromStmts) {
+    if (!baseAccounts.find(a => (a.suffix || '') === na.suffix)) {
+      baseAccounts.push(na);
+    }
+  }
+
+  fb.accounts = baseAccounts;
   fb.matchRan = true;
   saveFbarData();
   render();
@@ -1919,6 +2287,8 @@ function attachFbarListeners() {
   // Export button
   const expBtn = document.getElementById('fbarExportBtn');
   if (expBtn) expBtn.addEventListener('click', () => { downloadFbarPDF(); });
+  const genBtn = document.getElementById('fbarGeneratePdfBtn');
+  if (genBtn) genBtn.addEventListener('click', () => { generateRealFbarPdf(); });
 
   // Folder auto-load buttons
   const selDirBtn = document.getElementById('fbarSelectDir');
@@ -2002,6 +2372,222 @@ function downloadFbarPDF() {
   doc.save('FBAR_' + fb.year + '_' + fb.filer + '_reference.pdf');
   fb.completed = true;
   saveFbarData(); render();
+}
+
+// ─── FBAR REAL PDF GENERATION ─────────────────────────────────────────────────
+const UCC_NS_ATTR = 'xmlns:ucc="http://www.fincen.gov/bsa/ucommon-components/2011-06-01"';
+const FFBAR_NS_ATTRS = 'xmlns:ffbar="http://www.fincen.gov/bsa/ffbar/2011-06-01" xmlns:cc="http://www.fincen.gov/bsa/common-components/2009-01-01" xmlns:est="http://www.fincen.gov/bsa/efile-submission-types/2009-01-01" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"';
+function xmlE(tag, val, ns) { ns=ns||'ffbar'; const v=val!=null?String(val).trim():''; return v?`<${ns}:${tag}>${v}</${ns}:${tag}>`:`<${ns}:${tag}/>`; }
+function xmlEU(tag, val) { const v=val!=null?String(val).trim():''; return v?`<ucc:${tag} ${UCC_NS_ATTR}>${v}</ucc:${tag}>`:`<ucc:${tag} ${UCC_NS_ATTR}/>`; }
+function buildXmlAddr(a,ci,st,z,co) { return `<ffbar:Address>${xmlEU('Address',a)}${xmlEU('City',ci)}${xmlEU('State',st)}${xmlEU('ZIP',z)}${xmlEU('Country',co||'IN')}</ffbar:Address>`; }
+
+function buildAccountBlockXML(acct) {
+  const ownership = acct.ownership || 'sole';
+  const btype = acct.block_type || (ownership === 'joint' ? 'FinAcctOwnedJointly' : ownership === 'sigauth' ? 'FinAcctSigAuth' : 'FinAcctOwnedSeparately');
+  const TYPE_CODE_MAP = { bank:'B', brokerage:'S', mf:'M', other:'Z' };
+  const acctTypeCode = acct.acct_type_code || TYPE_CODE_MAP[acct.type] || 'B';
+  const cleanNum = (acct.number||'').replace(/^\*+/g,'').replace(/^X+/gi,'').trim() || acct.suffix || '';
+  const maxVal = Math.round(acct.newMax||0);
+  let xml = xmlE('MaximumAccntValue', maxVal > 0 ? String(maxVal) : '');
+  xml += xmlE('MaximumAccntUnkn', '');
+  xml += xmlE('AccountType', acctTypeCode);
+  if (acctTypeCode === 'Z') xml += xmlE('OtherDesc', acct.other_desc || acct.type || '');
+  else xml += xmlE('OtherDesc', '');
+  xml += xmlE('FinInstName', acct.name || '');
+  xml += xmlE('AccntNumber', cleanNum);
+  xml += buildXmlAddr(acct.addr||'', acct.city||'', acct.state||'', acct.zip||'', acct.country||'IN');
+  if (btype.includes('Jointly')) {
+    xml += xmlE('NOofJointOwners', acct.n_joint_owners || '');
+    const jc = acct.joint_country || 'IN';
+    xml += `<ffbar:PrincipalJointOwner>`
+      + xmlE('TIN', acct.joint_tin||'') + xmlE('TINType', acct.joint_tin_type||'')
+      + xmlE('IndividualLastName', acct.joint_last||'') + xmlE('IndividualFirstName', acct.joint_first||'')
+      + buildXmlAddr('','','','',jc)
+      + `</ffbar:PrincipalJointOwner>`;
+  }
+  return `<ffbar:${btype}>${xml}</ffbar:${btype}>`;
+}
+
+function buildNewDatasetsXML(fi, accounts, year) {
+  const filerLabel = fi ? (fi.last_name || '') : '';
+  const filingName = fi && fi.filing_name_base ? fi.filing_name_base + ' FBAR ' + year : 'FBAR ' + year;
+  const acctBlocks = accounts.map(buildAccountBlockXML).join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>`
+    + `<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">`
+    + `<xfa:data>`
+    + `<ffbar:BSAForm ${FFBAR_NS_ATTRS}>`
+    + (fi ? (
+        `<est:FilingName>${filingName}</est:FilingName>`
+      + (fi.filing_type ? `<est:FilingType>${fi.filing_type}</est:FilingType>` : '')
+      + (fi.submit_url ? `<est:SubmitUrl>${fi.submit_url}</est:SubmitUrl>` : '')
+      + `<ffbar:FilerInformation>`
+      + xmlE('TIN', fi.tin) + xmlE('TINType', fi.tin_type)
+      + xmlE('IndividualLastName', fi.last_name) + xmlE('IndividualFirstName', fi.first_name)
+      + xmlE('MiddleName', fi.middle_name) + xmlE('Suffix', fi.suffix_filer)
+      + xmlE('DateOfBirth', fi.dob) + xmlE('TypeOfFiler', fi.type_of_filer)
+      + buildXmlAddr(fi.addr, fi.city, fi.state, fi.zip, fi.country)
+      + `</ffbar:FilerInformation>`
+    ) : '')
+    + acctBlocks
+    + `</ffbar:BSAForm>`
+    + `</xfa:data>`
+    + `</xfa:datasets>`;
+}
+
+async function compressXmlStr(str) {
+  const enc = new TextEncoder().encode(str);
+  const inputStream = new ReadableStream({ start(c) { c.enqueue(enc); c.close(); } });
+  const cs = new CompressionStream('deflate');
+  const reader = inputStream.pipeThrough(cs).getReader();
+  const parts = [];
+  while (true) { const {done, value} = await reader.read(); if (done) break; parts.push(value); }
+  const out = new Uint8Array(parts.reduce((a,b) => a+b.length, 0));
+  let off = 0; parts.forEach(p => { out.set(p, off); off += p.length; });
+  return out;
+}
+
+function buildEmbeddedFileObjBytes(objNum, objGen, compressed) {
+  const header = `${objNum} ${objGen} obj\r<</Filter[/FlateDecode]/Length ${compressed.length}/Type/EmbeddedFile>>stream\r\n`;
+  const footer = `\rendstream\r\nendobj\r\n`;
+  const hBytes = new TextEncoder().encode(header);
+  const fBytes = new TextEncoder().encode(footer);
+  const out = new Uint8Array(hBytes.length + compressed.length + fBytes.length);
+  out.set(hBytes, 0);
+  out.set(compressed, hBytes.length);
+  out.set(fBytes, hBytes.length + compressed.length);
+  return out;
+}
+
+async function findXFADatasetsStreamInfo(bytes) {
+  async function tryDecompressChunk(chunk) {
+    const attempts = [['deflate', chunk], ['deflate-raw', chunk]];
+    if (chunk.length > 2 && chunk[0] === 0x78) attempts.push(['deflate-raw', chunk.slice(2)]);
+    for (const [fmt, data] of attempts) {
+      try {
+        const inputStream = new ReadableStream({ start(c) { c.enqueue(data); c.close(); } });
+        const reader = inputStream.pipeThrough(new DecompressionStream(fmt)).getReader();
+        const parts = [];
+        while (true) { const {done, value} = await reader.read(); if (done) break; parts.push(value); }
+        const out = new Uint8Array(parts.reduce((a,b) => a+b.length, 0));
+        let off = 0; parts.forEach(p => { out.set(p, off); off += p.length; });
+        return new TextDecoder('utf-8', {fatal:false}).decode(out);
+      } catch(_) {}
+    }
+    return null;
+  }
+  function matchAt(arr, pos, marker) {
+    if (pos + marker.length > arr.length) return false;
+    for (let k = 0; k < marker.length; k++) if (arr[pos+k] !== marker[k]) return false;
+    return true;
+  }
+  // stream\r\n marker
+  const SM = [115,116,114,101,97,109,13,10];
+  // \rendstream marker
+  const EM = [13,101,110,100,115,116,114,101,97,109];
+  // endobj text
+  const EO = [101,110,100,111,98,106];
+
+  for (let i = 0; i < bytes.length - SM.length; i++) {
+    if (bytes[i] !== 115) continue;
+    if (!matchAt(bytes, i, SM)) continue;
+    const streamDataStart = i + SM.length;
+    // Find \rendstream after this position
+    let endStreamPos = -1;
+    for (let j = streamDataStart; j < bytes.length - EM.length; j++) {
+      if (bytes[j] === 13 && matchAt(bytes, j, EM)) { endStreamPos = j; break; }
+    }
+    if (endStreamPos < 0 || endStreamPos <= streamDataStart) continue;
+    const chunk = bytes.slice(streamDataStart, endStreamPos);
+    const text = await tryDecompressChunk(chunk);
+    if (!text) continue;
+    const normalized = text.replace(/\n>/g, '>');
+    if (!normalized.includes('<xfa:datasets') || !normalized.includes('<ffbar:FinInstName>')) continue;
+
+    // Found the datasets stream — now find the object header by scanning backward
+    let objStart = -1, objNum = 0, objGen = 0;
+    // Scan backward from i to find a line ending with 'obj\r'
+    for (let back = i - 1; back >= 0; back--) {
+      if (bytes[back] !== 10) continue; // look for newline
+      // Check the bytes from back+1 for "N G obj\r" pattern
+      let lineEnd = back + 1;
+      while (lineEnd < i && bytes[lineEnd] !== 13 && bytes[lineEnd] !== 10) lineEnd++;
+      const lineBytes = bytes.slice(back + 1, lineEnd);
+      const lineStr = new TextDecoder().decode(lineBytes);
+      const m = lineStr.match(/^(\d+)\s+(\d+)\s+obj\s*$/);
+      if (m) {
+        objNum = parseInt(m[1]);
+        objGen = parseInt(m[2]);
+        objStart = back + 1;
+        break;
+      }
+    }
+    if (objStart < 0) continue;
+
+    // Find endobj after endstream
+    let endObjPos = endStreamPos + EM.length;
+    for (let j = endObjPos; j < bytes.length - EO.length; j++) {
+      if (matchAt(bytes, j, EO)) { endObjPos = j + EO.length; break; }
+    }
+    // Skip trailing whitespace
+    let slotEnd = endObjPos;
+    while (slotEnd < bytes.length && (bytes[slotEnd] === 13 || bytes[slotEnd] === 10 || bytes[slotEnd] === 32)) slotEnd++;
+
+    return { objStart, objNum, objGen, slotEnd, currentXML: normalized };
+  }
+  return null;
+}
+
+async function generateRealFbarPdf() {
+  const fb = S.fbar;
+  // Find template prev FBAR
+  const tmplIdx = fbarFileObjects.findIndex((_, i) => fb.files[i]?.fileType === 'prev_fbar');
+  if (tmplIdx < 0) { alert('Please upload a previous year FBAR PDF first.'); return; }
+
+  const genBtn = document.getElementById('fbarGeneratePdfBtn');
+  if (genBtn) { genBtn.disabled = true; genBtn.textContent = '⏳ Generating…'; }
+
+  try {
+    const templateFile = fbarFileObjects[tmplIdx];
+    const buf = await templateFile.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+
+    const dsInfo = await findXFADatasetsStreamInfo(bytes);
+    if (!dsInfo) throw new Error('Could not locate XFA datasets stream in PDF template.');
+
+    const filerInfo = fb.filerInfo || parseFilerInfoXFA(dsInfo.currentXML);
+    const included = fb.accounts.filter(a => a.include !== false && a.newMax != null);
+    if (included.length === 0) throw new Error('No accounts with balances to include.');
+
+    const newXML = buildNewDatasetsXML(filerInfo, included, fb.year);
+    const compressed = await compressXmlStr(newXML);
+    const newObjBytes = buildEmbeddedFileObjBytes(dsInfo.objNum, dsInfo.objGen, compressed);
+
+    const slotSize = dsInfo.slotEnd - dsInfo.objStart;
+    if (newObjBytes.length > slotSize) {
+      throw new Error('New XML is too large for the PDF slot (' + newObjBytes.length + ' vs ' + slotSize + ' bytes). Reduce the number of accounts or use a larger template.');
+    }
+
+    // Create copy and overwrite
+    const outBytes = new Uint8Array(bytes);
+    outBytes.set(newObjBytes, dsInfo.objStart);
+    // Pad remainder with spaces
+    for (let k = dsInfo.objStart + newObjBytes.length; k < dsInfo.slotEnd; k++) outBytes[k] = 0x20;
+
+    const filerLabel = filerInfo ? (filerInfo.last_name ? filerInfo.last_name + '_' : '') : '';
+    const filename = filerLabel + 'FBAR' + fb.year + '.pdf';
+    const blob = new Blob([outBytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+    fb.completed = true;
+    saveFbarData();
+    setTimeout(() => render(), 2000);
+  } catch(e) {
+    if (genBtn) { genBtn.disabled = false; genBtn.textContent = '⬇ Generate FBAR PDF'; }
+    alert('PDF generation error: ' + e.message);
+  }
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
