@@ -269,7 +269,7 @@ const GLOBAL_WORKER_SECRET = '81bb75bce37a6d0f848df3afa7227cc9ad803b575f4887bc5b
 // ─── STATE ────────────────────────────────────────────────────────────────────
 // driveFiles: { jawad_chhaya: [{id,name},...], sakina: [...], ... } — keyed by member ID
 let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:{},
-  fbar: { filer:'jawad', year:2025, accounts:[], files:[], fxRate:null, pdfPasswords:[], matchRan:false, completed:false, balCurrency:'inr', filerInfo:null, flags:[], passwordMap:{} }
+  fbar: { filer:'jawad', year:2025, accounts:[], files:[], currentYearFiles:[], fxRate:null, pdfPasswords:[], matchRan:false, completed:false, balCurrency:'inr', filerInfo:null, flags:[], passwordMap:{} }
 };
 
 // ─── FBAR PERSISTENCE ────────────────────────────────────────────────────────
@@ -282,7 +282,8 @@ function saveFbarData() {
     if (!all[fb.filer]) all[fb.filer] = {};
     all[fb.filer][fb.year] = {
       accounts: fb.accounts, fxRate: fb.fxRate,
-      files: fb.files, matchRan: fb.matchRan || false,
+      files: fb.files, currentYearFiles: fb.currentYearFiles || [],
+      matchRan: fb.matchRan || false,
       completed: fb.completed || false,
       balCurrency: fb.balCurrency || 'inr',
       matchLog: fb.matchLog || [],
@@ -301,7 +302,7 @@ function loadFbarData(filer, year) {
     const saved = all[filer]?.[year];
     if (saved) {
       return { filer, year, accounts: saved.accounts || [],
-        fxRate: saved.fxRate || null, files: [], // File objects don't survive page reload — always start fresh
+        fxRate: saved.fxRate || null, files: [], currentYearFiles: [], // File objects don't survive page reload — always start fresh
         matchRan: saved.matchRan || false, completed: saved.completed || false,
         balCurrency: saved.balCurrency || 'inr', matchLog: saved.matchLog || [],
         pdfPasswords: saved.pdfPasswords || [],
@@ -317,12 +318,12 @@ function loadFbarData(filer, year) {
         prevMax: a.newMax ?? a.prevMax,
         newMax: null, status: 'needs_update', source: null,
       }));
-      return { filer, year, accounts: carried, fxRate: null, files: [], matchRan: false,
+      return { filer, year, accounts: carried, fxRate: null, files: [], currentYearFiles: [], matchRan: false,
         completed: false, _carriedFrom: year - 1, balCurrency: 'inr', matchLog: [],
         filerInfo: null, flags: [], passwordMap: {} };
     }
   } catch(e) {}
-  return { filer, year, accounts: [], files: [], fxRate: null, matchRan: false, completed: false, balCurrency: 'inr', matchLog: [], filerInfo: null, flags: [], passwordMap: {} };
+  return { filer, year, accounts: [], files: [], currentYearFiles: [], fxRate: null, matchRan: false, completed: false, balCurrency: 'inr', matchLog: [], filerInfo: null, flags: [], passwordMap: {} };
 }
 
 function switchFbarFiler(filerId) {
@@ -1478,17 +1479,23 @@ async function fbarLoadDirHandle() {
 async function fbarLoadFromDir(handle) {
   const fb = S.fbar;
   const allowed = ['pdf','csv','xls','xlsx','png','jpg','jpeg','webp','gif'];
-  const newObjs = [], newMeta = [];
+  const newObjs = [], newMeta = [], newCurrentYearFiles = [];
   for await (const [name, fh] of handle.entries()) {
     if (fh.kind !== 'file') continue;
     const ext = name.split('.').pop().toLowerCase();
     if (!allowed.includes(ext)) continue;
     const file = await fh.getFile();
-    newObjs.push(file);
-    newMeta.push({ name, fileType: detectFbarFileType(file), matched: false });
+    const fileType = detectFbarFileType(file, fb.year);
+    if (fileType === 'current_fbar') {
+      newCurrentYearFiles.push({ name, fileType: 'current_fbar' });
+    } else {
+      newObjs.push(file);
+      newMeta.push({ name, fileType, matched: false });
+    }
   }
   fbarFileObjects = newObjs;
   fb.files = newMeta;
+  fb.currentYearFiles = newCurrentYearFiles;
   fb.matchLog = [];
   fb.matchRan = false;
   fb.flags = [];
@@ -1529,13 +1536,17 @@ async function fbarInitDir() {
   } catch {}
 }
 
-function detectFbarFileType(file) {
+function detectFbarFileType(file, year) {
   const name = file.name.toLowerCase();
   const ext = name.split('.').pop();
   if (['csv','xls','xlsx'].includes(ext)) return 'summary';
   if (['png','jpg','jpeg','webp','gif'].includes(ext)) return 'statement';
   if (ext === 'pdf') {
-    if (/fbar|fincen|bsa|f114/.test(name)) return 'prev_fbar';
+    if (/fbar|fincen|bsa|f114/.test(name)) {
+      // Current-year FBAR: filename contains the target year
+      if (year && name.includes(String(year))) return 'current_fbar';
+      return 'prev_fbar';
+    }
     return 'statement';
   }
   return 'statement';
@@ -1571,35 +1582,42 @@ function renderFbar() {
     return '<button onclick="switchFbarFiler(\'' + f.id + '\')" style="padding:6px 14px;border:none;cursor:pointer;font-size:13px;font-weight:' + (isActive?'600':'400') + ';border-bottom:2px solid ' + (isActive?'#4f46e5':'transparent') + ';background:transparent;color:' + (isActive?'#4f46e5':'#6b7280') + '">' + f.label + badge + '</button>';
   }).join('');
 
-  // ── File list ──
-  const fileList = fb.files.length === 0
-    ? '<div style="color:#9ca3af;font-size:12px;padding:4px 0">No files uploaded yet.</div>'
-    : fb.files.map((f, i) => {
-        const typeCfg = {
-          prev_fbar: { label:'Prev FBAR', bg:'#dbeafe', color:'#1e40af' },
-          summary:   { label:'Summary',   bg:'#d1fae5', color:'#065f46' },
-          statement: { label:'Statement', bg:'#fef3c7', color:'#92400e' },
-        }[f.fileType] || { label:'File', bg:'#f3f4f6', color:'#374151' };
-        const matchBadge = f.fileType === 'statement' && fb.matchRan
-          ? (f.matched
-              ? '<span style="font-size:11px;padding:2px 8px;background:#d1fae5;color:#065f46;border-radius:10px;margin-left:4px">matched</span>'
-              : '<span style="font-size:11px;padding:2px 8px;background:#fee2e2;color:#991b1b;border-radius:10px;margin-left:4px">unmatched</span>')
-          : '';
-        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f9fafb;border-radius:6px;margin-bottom:4px">'
-          + '<span style="font-size:13px">📄</span>'
-          + '<span style="font-size:13px;flex:1;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + f.name + '</span>'
-          + '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:' + typeCfg.bg + ';color:' + typeCfg.color + '">' + typeCfg.label + '</span>'
-          + matchBadge
-          + '<button style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:14px;padding:0 2px" data-rmfile="' + i + '">×</button>'
-          + '</div>';
-      }).join('');
+  // ── File list (two panels: input files | generated FBARs for target year) ──
+  function renderFileEntry(f, i, removable) {
+    const typeCfg = {
+      prev_fbar:    { label:'Prev FBAR',  bg:'#dbeafe', color:'#1e40af' },
+      summary:      { label:'Summary',    bg:'#d1fae5', color:'#065f46' },
+      statement:    { label:'Statement',  bg:'#fef3c7', color:'#92400e' },
+      current_fbar: { label:'Generated',  bg:'#f3e8ff', color:'#6b21a8' },
+    }[f.fileType] || { label:'File', bg:'#f3f4f6', color:'#374151' };
+    const matchBadge = f.fileType === 'statement' && fb.matchRan
+      ? (f.matched
+          ? '<span style="font-size:11px;padding:2px 8px;background:#d1fae5;color:#065f46;border-radius:10px;margin-left:4px">matched</span>'
+          : '<span style="font-size:11px;padding:2px 8px;background:#fee2e2;color:#991b1b;border-radius:10px;margin-left:4px">unmatched</span>')
+      : '';
+    return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f9fafb;border-radius:6px;margin-bottom:4px">'
+      + '<span style="font-size:13px">📄</span>'
+      + '<span style="font-size:13px;flex:1;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0" title="' + f.name + '">' + f.name + '</span>'
+      + '<span style="font-size:11px;padding:2px 8px;border-radius:10px;white-space:nowrap;background:' + typeCfg.bg + ';color:' + typeCfg.color + '">' + typeCfg.label + '</span>'
+      + matchBadge
+      + (removable !== false ? '<button style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:14px;padding:0 2px" data-rmfile="' + i + '">×</button>' : '')
+      + '</div>';
+  }
+  const inputFileList = fb.files.length === 0
+    ? '<div style="color:#9ca3af;font-size:12px;padding:4px 0">No input files yet.</div>'
+    : fb.files.map((f, i) => renderFileEntry(f, i, true)).join('');
+  const currentYearFileList = (fb.currentYearFiles || []).length === 0
+    ? '<div style="color:#9ca3af;font-size:12px;padding:4px 0">No generated FBARs for ' + fb.year + ' found in folder.</div>'
+    : (fb.currentYearFiles || []).map(f => renderFileEntry(f, -1, false)).join('');
 
-  // ── Account rows ──
-  const acctRows = fb.accounts.map((a, i) => {
+  // ── Account rows (included / excluded panels) ──
+  function renderAcctRow(a, i, isIncluded) {
     const prevDisp = a.prevMax != null ? (cur === 'inr' ? fmtINR(Math.round(a.prevMax * rate)) : fmtUSD(a.prevMax)) : '—';
     const newVal = a.newMax != null ? (cur === 'inr' ? Math.round(a.newMax * rate) : Math.round(a.newMax)) : '';
     const typeOpts = ['bank','brokerage','mf','other'].map(t => '<option value="' + t + '"' + (t === a.type ? ' selected' : '') + '>' + FBAR_TYPE_LABELS[t] + '</option>').join('');
-    const inclCheck = '<input type="checkbox"' + (a.include !== false ? ' checked' : '') + ' data-ai="' + i + '" data-f="include" style="cursor:pointer">';
+    const moveBtn = isIncluded
+      ? '<button title="Exclude" style="background:none;border:1px solid #e5e7eb;cursor:pointer;color:#6b7280;font-size:11px;padding:2px 7px;border-radius:4px;white-space:nowrap" data-moveout="' + i + '">Exclude</button>'
+      : '<button title="Include" style="background:none;border:1px solid #4f46e5;cursor:pointer;color:#4f46e5;font-size:11px;padding:2px 7px;border-radius:4px;white-space:nowrap" data-movein="' + i + '">Include</button>';
     return '<tr style="border-bottom:1px solid #f3f4f6">'
       + '<td style="padding:6px 8px"><input type="text" class="fbar-input" data-ai="' + i + '" data-f="name" value="' + (a.name||'').replace(/"/g,'&quot;') + '" placeholder="Institution" style="width:100%"></td>'
       + '<td style="padding:6px 4px"><select class="fbar-input" data-ai="' + i + '" data-f="type" style="width:100%">' + typeOpts + '</select></td>'
@@ -1608,14 +1626,28 @@ function renderFbar() {
       + '<td style="padding:6px 4px"><input type="text" class="fbar-input" data-ai="' + i + '" data-f="newMax" value="' + newVal + '" placeholder="' + cur.toUpperCase() + '" style="width:100%"></td>'
       + '<td style="padding:6px 8px;white-space:nowrap">' + fbarStatusBadge(a.status) + '</td>'
       + '<td style="padding:6px 8px;font-size:12px;color:#6b7280;white-space:nowrap">' + (a.source || '—') + '</td>'
-      + '<td style="padding:6px 4px;text-align:center">' + inclCheck + '</td>'
+      + '<td style="padding:6px 4px;text-align:center">' + moveBtn + '</td>'
       + '<td style="padding:6px 4px;text-align:center"><button style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;padding:0;line-height:1" data-del="' + i + '">×</button></td>'
       + '</tr>';
-  }).join('');
+  }
+  const acctTableHeader = '<thead><tr style="border-bottom:2px solid #e5e7eb">'
+    + '<th style="padding:6px 8px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Institution</th>'
+    + '<th style="padding:6px 4px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Type</th>'
+    + '<th style="padding:6px 4px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Acct #</th>'
+    + '<th style="padding:6px 8px;text-align:right;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Prev Max</th>'
+    + '<th style="padding:6px 4px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">New Balance (' + cur.toUpperCase() + ')</th>'
+    + '<th style="padding:6px 8px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Status</th>'
+    + '<th style="padding:6px 8px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Source</th>'
+    + '<th style="padding:6px 8px;text-align:center;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase"></th>'
+    + '<th></th>'
+    + '</tr></thead>';
+  const includedRows = fb.accounts.map((a,i) => a.include !== false ? renderAcctRow(a, i, true) : '').join('');
+  const excludedRows = fb.accounts.map((a,i) => a.include === false ? renderAcctRow(a, i, false) : '').join('');
 
   const hasAccounts = fb.accounts.length > 0;
   const hasPrevFbar = fb.files.some(f => f.fileType === 'prev_fbar');
-  const canExport = hasAccounts && fb.accounts.some(a => a.newMax != null);
+  const includedAccounts = fb.accounts.filter(a => a.include !== false);
+  const canExport = includedAccounts.length > 0 && includedAccounts.some(a => a.newMax != null);
 
   return '<div style="display:flex;flex-direction:column;gap:16px">'
 
@@ -1652,15 +1684,27 @@ function renderFbar() {
         }
       })()
 
-    // Upload + file list card
-    + '<div class="card">'
-    + '<div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:10px">Upload Files</div>'
-    + '<div style="font-size:12px;color:#9ca3af;margin-bottom:10px">Accepts: prev year FBAR (PDF), account summary (CSV/XLS), account statements (PDF/image) — type is detected automatically</div>'
-    + '<div class="fbar-drop" id="fbarUploadDrop" onclick="document.getElementById(\'fbarUploadInput\').click()" style="padding:14px 24px;margin-bottom:10px">'
-    + '<div style="font-size:13px;font-weight:500">Drop files here or click to browse</div>'
+    // Upload + file list — two side-by-side panels
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">'
+
+    // Left panel: input files
+    + '<div class="card" style="margin:0">'
+    + '<div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:6px">Input Files</div>'
+    + '<div style="font-size:12px;color:#9ca3af;margin-bottom:8px">Prev FBAR, summary CSV/XLS, statements</div>'
+    + '<div class="fbar-drop" id="fbarUploadDrop" onclick="document.getElementById(\'fbarUploadInput\').click()" style="padding:10px 16px;margin-bottom:8px">'
+    + '<div style="font-size:12px;font-weight:500">Drop files or click to browse</div>'
     + '</div>'
     + '<input type="file" id="fbarUploadInput" multiple accept=".pdf,.csv,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.gif" style="display:none">'
-    + fileList
+    + inputFileList
+    + '</div>'
+
+    // Right panel: generated FBARs for target year
+    + '<div class="card" style="margin:0;border-color:#e9d5ff">'
+    + '<div style="font-weight:600;font-size:14px;color:#6b21a8;margin-bottom:6px">Generated FBARs — ' + fb.year + '</div>'
+    + '<div style="font-size:12px;color:#9ca3af;margin-bottom:8px">FBARs detected for ' + fb.year + ' in the loaded folder</div>'
+    + currentYearFileList
+    + '</div>'
+
     + '</div>'
 
     // Run Match button
@@ -1674,28 +1718,34 @@ function renderFbar() {
         ? '<div style="background:#1e293b;color:#e2e8f0;font-family:monospace;font-size:12px;padding:12px 16px;border-radius:8px;max-height:160px;overflow-y:auto;white-space:pre-wrap">' + fb.matchLog.join('\n') + '</div>'
         : '')
 
-    // Account table
-    + '<div class="card">'
+    // Account panels — two side by side: Included | Excluded
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">'
+
+    // Left: Included in FBAR
+    + '<div class="card" style="margin:0">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
-    + '<div style="font-weight:600;font-size:14px;color:#374151">Accounts — ' + fb.year + '</div>'
-    + '<button class="btn btn-ghost" style="font-size:12px" id="fbarAddAcct">+ Add Account</button>'
+    + '<div style="font-weight:600;font-size:14px;color:#374151">Included in FBAR <span style="font-size:12px;color:#6b7280;font-weight:400">(' + fb.accounts.filter(a=>a.include!==false).length + ')</span></div>'
+    + '<button class="btn btn-ghost" style="font-size:12px" id="fbarAddAcct">+ Add</button>'
     + '</div>'
-    + (hasAccounts
-        ? '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
-          + '<thead><tr style="border-bottom:2px solid #e5e7eb">'
-          + '<th style="padding:6px 8px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Institution</th>'
-          + '<th style="padding:6px 4px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Type</th>'
-          + '<th style="padding:6px 4px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Acct #</th>'
-          + '<th style="padding:6px 8px;text-align:right;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Prev Max</th>'
-          + '<th style="padding:6px 4px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">New Balance (' + cur.toUpperCase() + ')</th>'
-          + '<th style="padding:6px 8px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Status</th>'
-          + '<th style="padding:6px 8px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Source</th>'
-          + '<th style="padding:6px 8px;text-align:center;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase">Inc</th>'
-          + '<th></th>'
-          + '</tr></thead>'
-          + '<tbody>' + acctRows + '</tbody>'
+    + (fb.accounts.some(a => a.include !== false)
+        ? '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+          + acctTableHeader
+          + '<tbody>' + includedRows + '</tbody>'
           + '</table></div>'
-        : '<div style="text-align:center;padding:32px;color:#9ca3af;font-size:13px">No accounts yet. Run Match to extract from files, or add manually.</div>')
+        : '<div style="text-align:center;padding:24px;color:#9ca3af;font-size:13px">No accounts included. Run Match or add manually.</div>')
+    + '</div>'
+
+    // Right: Excluded
+    + '<div class="card" style="margin:0;border-color:#fde8d8">'
+    + '<div style="font-weight:600;font-size:14px;color:#9a3412;margin-bottom:10px">Excluded <span style="font-size:12px;color:#9ca3af;font-weight:400">(' + fb.accounts.filter(a=>a.include===false).length + ')</span></div>'
+    + (fb.accounts.some(a => a.include === false)
+        ? '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+          + acctTableHeader
+          + '<tbody>' + excludedRows + '</tbody>'
+          + '</table></div>'
+        : '<div style="text-align:center;padding:24px;color:#d1d5db;font-size:13px">No excluded accounts.</div>')
+    + '</div>'
+
     + '</div>'
 
     // Flags section (password-protected + unmatched statements)
@@ -2283,6 +2333,22 @@ function attachFbarListeners() {
     });
   });
 
+  // Move account to Excluded panel
+  document.querySelectorAll('[data-moveout]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const i = parseInt(e.target.dataset.moveout);
+      if (fb.accounts[i]) { fb.accounts[i].include = false; saveFbarData(); render(); }
+    });
+  });
+
+  // Move account to Included panel
+  document.querySelectorAll('[data-movein]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const i = parseInt(e.target.dataset.movein);
+      if (fb.accounts[i]) { fb.accounts[i].include = true; saveFbarData(); render(); }
+    });
+  });
+
   // Run Match button
   const runBtn = document.getElementById('fbarRunMatch');
   if (runBtn) runBtn.addEventListener('click', () => { runMatch(); });
@@ -2311,10 +2377,15 @@ function addFbarUploadFiles(fileList) {
   for (const file of fileList) {
     const ext = file.name.split('.').pop().toLowerCase();
     if (!allowed.includes(ext)) continue;
-    if (fb.files.some(f => f.name === file.name)) continue; // dedupe
-    const fileType = detectFbarFileType(file);
-    fb.files.push({ name: file.name, fileType, matched: false });
-    fbarFileObjects.push(file);
+    const fileType = detectFbarFileType(file, fb.year);
+    if (fileType === 'current_fbar') {
+      if (!fb.currentYearFiles.some(f => f.name === file.name))
+        fb.currentYearFiles.push({ name: file.name, fileType: 'current_fbar' });
+    } else {
+      if (fb.files.some(f => f.name === file.name)) continue; // dedupe
+      fb.files.push({ name: file.name, fileType, matched: false });
+      fbarFileObjects.push(file);
+    }
   }
   fb.matchRan = false;
   saveFbarData(); render();
