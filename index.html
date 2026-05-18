@@ -1558,8 +1558,9 @@ function parse8938Text(text) {
   const p1m = text.match(/Part\s+I\b([\s\S]*?)(?:Part\s+II\b|Part\s+V\b|$)/i);
   const searchText = p1m ? p1m[1] : text;
 
-  // Match "4 ..." or "Maximum value ..." lines that contain a $ amount on the same line
-  const maxValRe = /(?:4[\.\s][^\r\n]*?|Maximum\s+value[^\r\n]*?)\$\s*([\d,]+)/gi;
+  // Anchor '4' field label to line start (m flag) so trailing digits in account numbers
+  // like "XXXXXX1234\n4 Maximum value..." don't cause false matches.
+  const maxValRe = /(?:^4[\s.][^\r\n]*?|Maximum\s+value[^\r\n]*?)\$\s*([\d,]+)/gim;
   let mx;
   while ((mx = maxValRe.exec(searchText)) !== null) {
     const maxUSD = parseInt(mx[1].replace(/,/g, ''), 10);
