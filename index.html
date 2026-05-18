@@ -2605,9 +2605,18 @@ async function findXFADatasetsStreamInfo(bytes) {
     for (let j = endObjPos; j < bytes.length - EO.length; j++) {
       if (matchAt(bytes, j, EO)) { endObjPos = j + EO.length; break; }
     }
-    // Skip trailing whitespace
+    // slotEnd = start of NEXT PDF object — mirrors Python's all_direct_offsets[idx+1]
+    // Scan forward past endobj looking for next "N G obj" line header.
+    // This correctly includes null-byte padding that PDF generators put between objects,
+    // which a simple whitespace-skip would miss and under-report the slot size.
     let slotEnd = endObjPos;
-    while (slotEnd < bytes.length && (bytes[slotEnd] === 13 || bytes[slotEnd] === 10 || bytes[slotEnd] === 32)) slotEnd++;
+    for (let j = endObjPos; j < Math.min(endObjPos + 8192, bytes.length - 10); j++) {
+      if (bytes[j] < 0x30 || bytes[j] > 0x39) continue; // not a digit
+      let le = j;
+      while (le < bytes.length && bytes[le] !== 13 && bytes[le] !== 10) le++;
+      const lineStr = new TextDecoder().decode(bytes.slice(j, Math.min(le, j + 60)));
+      if (/^\d+\s+\d+\s+obj\b/.test(lineStr)) { slotEnd = j; break; }
+    }
 
     return { objStart, objNum, objGen, slotEnd, currentXML: normalized };
   }
