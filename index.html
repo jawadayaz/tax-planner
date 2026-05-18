@@ -1542,6 +1542,7 @@ function detectFbarFileType(file, year) {
   if (['csv','xls','xlsx'].includes(ext)) return 'summary';
   if (['png','jpg','jpeg','webp','gif'].includes(ext)) return 'statement';
   if (ext === 'pdf') {
+    if (/\b8938\b/.test(name)) return 'form_8938';
     if (/fbar|fincen|bsa|f114/.test(name)) {
       // Current-year FBAR: filename contains the target year
       if (year && name.includes(String(year))) return 'current_fbar';
@@ -1550,6 +1551,40 @@ function detectFbarFileType(file, year) {
     return 'statement';
   }
   return 'statement';
+}
+
+function parse8938Text(text) {
+  // Extract foreign accounts from Form 8938 Part I text.
+  // Returns array of {institution, number, suffix, maxUSD}.
+  const accounts = [];
+  // Isolate Part I
+  const p1m = text.match(/Part\s+I\b([\s\S]*?)(?:Part\s+II\b|Part\s+V\b|$)/i);
+  const searchText = p1m ? p1m[1] : text;
+
+  // Anchor on "Maximum value" — each occurrence = one account in Part I
+  const maxValRe = /(?:4[\.\s]|Maximum\s+value[^\r\n]*[\r\n]+)\$?\s*([\d,]+)/gi;
+  let mx;
+  while ((mx = maxValRe.exec(searchText)) !== null) {
+    const maxUSD = parseInt(mx[1].replace(/,/g, ''), 10);
+    if (isNaN(maxUSD)) continue;
+    const before = searchText.slice(Math.max(0, mx.index - 800), mx.index);
+
+    // Institution: after "1a" or "Name of financial institution" label
+    const instM = before.match(/(?:1\s*[aA][\.\s]+|Name\s+of\s+financial\s+institution[^\r\n]*[\r\n]+)([^\r\n]+)/i);
+    const institution = instM ? instM[1].trim() : '';
+
+    // Account number: after "2" or "Account number" label
+    const numM = before.match(/(?:2[\.\s]+|Account\s+(?:number|no\.?)[^\r\n]*[\r\n]+)([^\r\n]+)/i);
+    let number = numM ? numM[1].trim().split(/\s{3,}|\t/)[0].trim() : '';
+
+    if (!institution && !number) continue;
+
+    const digits = number.replace(/[^0-9]/g, '');
+    const suffix = digits.length >= 4 ? digits.slice(-4) : null;
+
+    accounts.push({ institution, number, suffix, maxUSD });
+  }
+  return accounts;
 }
 
 function fbarStatusBadge(status) {
@@ -1589,6 +1624,7 @@ function renderFbar() {
       summary:      { label:'Summary',    bg:'#d1fae5', color:'#065f46' },
       statement:    { label:'Statement',  bg:'#fef3c7', color:'#92400e' },
       current_fbar: { label:'Generated',  bg:'#f3e8ff', color:'#6b21a8' },
+      form_8938:    { label:'Form 8938',  bg:'#fce7f3', color:'#9d174d' },
     }[f.fileType] || { label:'File', bg:'#f3f4f6', color:'#374151' };
     const matchBadge = f.fileType === 'statement' && fb.matchRan
       ? (f.matched
@@ -2087,7 +2123,54 @@ async function runMatch() {
     } catch(e) { fb.matchLog.push('  Error: ' + e.message); }
   }
 
-  // ── Step 3: process statements (priority 1 — overrides CSV) ──
+  // ── Step 2.5: process Form 8938 (FATCA) — priority 2, overrides CSV but not statements ──
+  const form8938Objs = fbarFileObjects.filter((_, i) => fb.files[i]?.fileType === 'form_8938');
+  if (form8938Objs.length > 0) {
+    fb.matchLog.push('\nStep 2.5 — Processing Form 8938 (FATCA)…');
+    render();
+  }
+  for (const file of form8938Objs) {
+    try {
+      fb.matchLog.push('  ' + file.name + '…'); render();
+      const text = await extractTextFromFile(file);
+      const accts8 = parse8938Text(text);
+      fb.matchLog.push('  Found ' + accts8.length + ' account(s) in 8938');
+      for (const a8 of accts8) {
+        const sfxLabel = a8.suffix ? '****' + a8.suffix : a8.number || '?';
+        const valLabel = a8.maxUSD ? fmtUSD(a8.maxUSD) : '?';
+        // Find matching account in baseAccounts
+        const m = a8.suffix
+          ? baseAccounts.find(a => (a.suffix || (a.number || '').replace(/[^0-9]/g,'').slice(-4)) === a8.suffix)
+          : null;
+        if (m) {
+          // Only override if source is not 'statement' (statement has higher priority)
+          if (m.source !== 'statement') {
+            m.newMax = a8.maxUSD;
+            m.source = '8938';
+            if (m.status === 'needs_update') m.status = 'matched';
+          }
+          fb.matchLog.push('  ✓ ' + (a8.institution || sfxLabel) + ' — ' + valLabel + (m.source === '8938' ? '' : ' (kept statement balance)'));
+        } else if (a8.suffix) {
+          // New account found only in 8938
+          baseAccounts.push({
+            id: Math.random().toString(36).slice(2,8),
+            name: a8.institution || ('Account ' + sfxLabel),
+            type: 'bank', number: a8.number || ('****' + a8.suffix),
+            suffix: a8.suffix, ownership: 'sole',
+            block_type: 'FinAcctOwnedSeparately',
+            acct_type_code: 'B', other_desc: '',
+            addr: '', city: '', state: '', zip: '', country: 'IN',
+            n_joint_owners: '', joint_tin: '', joint_tin_type: '', joint_last: '', joint_first: '', joint_country: '',
+            prevMax: null, newMax: a8.maxUSD,
+            status: 'new', source: '8938', include: true,
+          });
+          fb.matchLog.push('  + New from 8938: ' + sfxLabel + ' — ' + valLabel);
+        }
+      }
+    } catch(e) { fb.matchLog.push('  Error: ' + e.message); }
+  }
+
+  // ── Step 3: process statements (priority 1 — overrides CSV and 8938) ──
   const allKnownSuffixes = new Set(baseAccounts.map(a => a.suffix).filter(s => s && s.length === 4));
   const newAcctsFromStmts = [];
 
