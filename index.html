@@ -1554,28 +1554,24 @@ function detectFbarFileType(file, year) {
 }
 
 function parse8938Text(text) {
-  // Extract foreign accounts from Form 8938 Part I text.
-  // Returns array of {institution, number, suffix, maxUSD}.
   const accounts = [];
-  // Isolate Part I
   const p1m = text.match(/Part\s+I\b([\s\S]*?)(?:Part\s+II\b|Part\s+V\b|$)/i);
   const searchText = p1m ? p1m[1] : text;
 
-  // Anchor on "Maximum value" — each occurrence = one account in Part I
-  const maxValRe = /(?:4[\.\s]|Maximum\s+value[^\r\n]*[\r\n]+)\$?\s*([\d,]+)/gi;
+  // Match "4 ..." or "Maximum value ..." lines that contain a $ amount on the same line
+  const maxValRe = /(?:4[\.\s][^\r\n]*?|Maximum\s+value[^\r\n]*?)\$\s*([\d,]+)/gi;
   let mx;
   while ((mx = maxValRe.exec(searchText)) !== null) {
     const maxUSD = parseInt(mx[1].replace(/,/g, ''), 10);
     if (isNaN(maxUSD)) continue;
     const before = searchText.slice(Math.max(0, mx.index - 800), mx.index);
 
-    // Institution: after "1a" or "Name of financial institution" label
-    const instM = before.match(/(?:1\s*[aA][\.\s]+|Name\s+of\s+financial\s+institution[^\r\n]*[\r\n]+)([^\r\n]+)/i);
-    const institution = instM ? instM[1].trim() : '';
+    // Use last match so multi-account lookbacks pick the closest label before this anchor
+    const instAll = [...before.matchAll(/(?:1\s*[aA][\s.]+[^\r\n]*[\r\n]+|Name\s+of\s+financial\s+institution[^\r\n]*[\r\n]+)([^\r\n]+)/gi)];
+    const institution = instAll.length > 0 ? instAll[instAll.length - 1][1].trim() : '';
 
-    // Account number: after "2" or "Account number" label
-    const numM = before.match(/(?:2[\.\s]+|Account\s+(?:number|no\.?)[^\r\n]*[\r\n]+)([^\r\n]+)/i);
-    let number = numM ? numM[1].trim().split(/\s{3,}|\t/)[0].trim() : '';
+    const numAll = [...before.matchAll(/(?:2[\s.]+[^\r\n]*[\r\n]+|Account\s+(?:number|no\.?)[^\r\n]*[\r\n]+)([^\r\n]+)/gi)];
+    let number = numAll.length > 0 ? numAll[numAll.length - 1][1].trim().split(/\s{3,}|\t/)[0].trim() : '';
 
     if (!institution && !number) continue;
 
