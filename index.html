@@ -1489,6 +1489,9 @@ async function fbarLoadFromDir(handle) {
   }
   fbarFileObjects = newObjs;
   fb.files = newMeta;
+  fb.matchLog = [];
+  fb.matchRan = false;
+  fb.flags = [];
   saveFbarData(); render();
 }
 
