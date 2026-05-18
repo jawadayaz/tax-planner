@@ -2137,7 +2137,7 @@ async function runMatch() {
           fb.matchLog.push('    ✓ [' + suffixSource + ':****' + acctSuffix + '] ' + acctByNumber.name + ' — ' + fmtINR(peakBalance) + ' → ' + fmtUSD(usdVal));
           fileMatched = true;
         } else {
-          fb.matchLog.push('    ? [' + suffixSource + ':****' + acctSuffix + '] ' + acctByNumber.name + ' — no balance found in statement');
+          fb.matchLog.push('    ? [' + suffixSource + ':****' + acctSuffix + '] ' + acctByNumber.name + ' — no balance found in ' + fb.year);
         }
       } else {
         // Suffix found but not in any account — track for new account
