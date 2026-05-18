@@ -2094,10 +2094,10 @@ async function runMatch() {
             if (!opened) {
               // Flag the file
               const hasCsvEntry = filenameSuffix && allKnownSuffixes.has(filenameSuffix);
-              const csvEntryHasBlankPwd = hasCsvEntry && !passwordsToTry.length;
+              const csvHasPassword = filenameSuffix && fb.passwordMap[filenameSuffix] && fb.passwordMap[filenameSuffix].length > 0;
               let reason;
               if (!hasCsvEntry) reason = 'PASSWORD PROTECTED — no matching CSV entry';
-              else if (csvEntryHasBlankPwd) reason = 'PASSWORD PROTECTED — CSV entry exists but password column is blank';
+              else if (!csvHasPassword) reason = 'PASSWORD PROTECTED — CSV entry exists but password column is blank';
               else reason = 'PASSWORD PROTECTED — wrong password';
               fb.flags.push({ type: 'password_protected', suffix: filenameSuffix, file: file.name, reason });
               if (metaIdx >= 0) fb.files[metaIdx].flag = reason;
