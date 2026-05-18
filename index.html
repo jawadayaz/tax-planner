@@ -1684,10 +1684,10 @@ function renderFbar() {
         }
       })()
 
-    // Upload + file list — two side-by-side panels
+    // Files + progress — two side-by-side columns
     + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">'
 
-    // Left panel: input files
+    // Left column: input files
     + '<div class="card" style="margin:0">'
     + '<div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:6px">Input Files</div>'
     + '<div style="font-size:12px;color:#9ca3af;margin-bottom:8px">Prev FBAR, summary CSV/XLS, statements</div>'
@@ -1698,11 +1698,16 @@ function renderFbar() {
     + inputFileList
     + '</div>'
 
-    // Right panel: generated FBARs for target year
+    // Right column: Generated FBARs (top) + progress log (below)
+    + '<div style="display:flex;flex-direction:column;gap:10px">'
     + '<div class="card" style="margin:0;border-color:#e9d5ff">'
     + '<div style="font-weight:600;font-size:14px;color:#6b21a8;margin-bottom:6px">Generated FBARs — ' + fb.year + '</div>'
-    + '<div style="font-size:12px;color:#9ca3af;margin-bottom:8px">FBARs detected for ' + fb.year + ' in the loaded folder</div>'
+    + '<div style="font-size:12px;color:#9ca3af;margin-bottom:8px">FBARs for ' + fb.year + ' detected in folder</div>'
     + currentYearFileList
+    + '</div>'
+    + (fb.matchLog && fb.matchLog.length
+        ? '<div style="background:#1e293b;color:#e2e8f0;font-family:monospace;font-size:12px;padding:12px 16px;border-radius:8px;max-height:220px;overflow-y:auto;white-space:pre-wrap">' + fb.matchLog.join('\n') + '</div>'
+        : '')
     + '</div>'
 
     + '</div>'
@@ -1713,40 +1718,31 @@ function renderFbar() {
     + (fb.matchRan ? '<span style="font-size:12px;color:#6b7280">Last run: extracted from ' + fb.files.length + ' file(s)</span>' : '')
     + '</div>'
 
-    // Match log (if ran)
-    + (fb.matchLog && fb.matchLog.length
-        ? '<div style="background:#1e293b;color:#e2e8f0;font-family:monospace;font-size:12px;padding:12px 16px;border-radius:8px;max-height:160px;overflow-y:auto;white-space:pre-wrap">' + fb.matchLog.join('\n') + '</div>'
-        : '')
-
-    // Account panels — two side by side: Included | Excluded
-    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">'
-
-    // Left: Included in FBAR
-    + '<div class="card" style="margin:0">'
+    // Account panels — full-width vertical stack: Included then Excluded
+    // Included in FBAR
+    + '<div class="card">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
     + '<div style="font-weight:600;font-size:14px;color:#374151">Included in FBAR <span style="font-size:12px;color:#6b7280;font-weight:400">(' + fb.accounts.filter(a=>a.include!==false).length + ')</span></div>'
-    + '<button class="btn btn-ghost" style="font-size:12px" id="fbarAddAcct">+ Add</button>'
+    + '<button class="btn btn-ghost" style="font-size:12px" id="fbarAddAcct">+ Add Account</button>'
     + '</div>'
     + (fb.accounts.some(a => a.include !== false)
-        ? '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+        ? '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
           + acctTableHeader
           + '<tbody>' + includedRows + '</tbody>'
           + '</table></div>'
         : '<div style="text-align:center;padding:24px;color:#9ca3af;font-size:13px">No accounts included. Run Match or add manually.</div>')
     + '</div>'
 
-    // Right: Excluded
-    + '<div class="card" style="margin:0;border-color:#fde8d8">'
-    + '<div style="font-weight:600;font-size:14px;color:#9a3412;margin-bottom:10px">Excluded <span style="font-size:12px;color:#9ca3af;font-weight:400">(' + fb.accounts.filter(a=>a.include===false).length + ')</span></div>'
+    // Excluded
     + (fb.accounts.some(a => a.include === false)
-        ? '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+        ? '<div class="card" style="border-color:#fde8d8">'
+          + '<div style="font-weight:600;font-size:14px;color:#9a3412;margin-bottom:10px">Excluded <span style="font-size:12px;color:#9ca3af;font-weight:400">(' + fb.accounts.filter(a=>a.include===false).length + ')</span></div>'
+          + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
           + acctTableHeader
           + '<tbody>' + excludedRows + '</tbody>'
           + '</table></div>'
-        : '<div style="text-align:center;padding:24px;color:#d1d5db;font-size:13px">No excluded accounts.</div>')
-    + '</div>'
-
-    + '</div>'
+          + '</div>'
+        : '')
 
     // Flags section (password-protected + unmatched statements)
     + (fb.flags && fb.flags.length
@@ -2554,28 +2550,35 @@ async function findXFADatasetsStreamInfo(bytes) {
     for (let k = 0; k < marker.length; k++) if (arr[pos+k] !== marker[k]) return false;
     return true;
   }
-  // stream\r\n marker
-  const SM = [115,116,114,101,97,109,13,10];
-  // \rendstream marker
-  const EM = [13,101,110,100,115,116,114,101,97,109];
+  // 'stream' keyword bytes (6)
+  const STREAM_KW = [115,116,114,101,97,109];
+  // 'endstream' bytes (9)
+  const ENDSTREAM_KW = [101,110,100,115,116,114,101,97,109];
   // endobj text
   const EO = [101,110,100,111,98,106];
 
-  for (let i = 0; i < bytes.length - SM.length; i++) {
+  for (let i = 0; i < bytes.length - 7; i++) {
     if (bytes[i] !== 115) continue;
-    if (!matchAt(bytes, i, SM)) continue;
-    const streamDataStart = i + SM.length;
-    // Find \rendstream after this position
+    if (!matchAt(bytes, i, STREAM_KW)) continue;
+    // Accept stream\r\n or stream\n (real FinCEN PDFs use LF-only)
+    let streamDataStart = -1;
+    if (bytes[i+6] === 13 && bytes[i+7] === 10) streamDataStart = i + 8; // CRLF
+    else if (bytes[i+6] === 10) streamDataStart = i + 7;                  // LF only
+    if (streamDataStart < 0) continue;
+    // Find endstream — preceded by \r or \n
     let endStreamPos = -1;
-    for (let j = streamDataStart; j < bytes.length - EM.length; j++) {
-      if (bytes[j] === 13 && matchAt(bytes, j, EM)) { endStreamPos = j; break; }
+    for (let j = streamDataStart; j < bytes.length - ENDSTREAM_KW.length; j++) {
+      if ((bytes[j] === 13 || bytes[j] === 10) && matchAt(bytes, j + 1, ENDSTREAM_KW)) {
+        endStreamPos = j; break;
+      }
     }
     if (endStreamPos < 0 || endStreamPos <= streamDataStart) continue;
     const chunk = bytes.slice(streamDataStart, endStreamPos);
     const text = await tryDecompressChunk(chunk);
     if (!text) continue;
-    const normalized = text.replace(/\n>/g, '>');
-    if (!normalized.includes('<xfa:datasets') || !normalized.includes('<ffbar:FinInstName>')) continue;
+    const normalized = text.replace(/\n>/g, '>').replace(/\r>/g, '>');
+    // Match any valid FBAR XFA stream — don't require FinInstName (trusts may have 0 accounts)
+    if (!normalized.includes('<xfa:datasets') || !normalized.includes('ffbar:BSAForm')) continue;
 
     // Found the datasets stream — now find the object header by scanning backward
     let objStart = -1, objNum = 0, objGen = 0;
@@ -2597,8 +2600,8 @@ async function findXFADatasetsStreamInfo(bytes) {
     }
     if (objStart < 0) continue;
 
-    // Find endobj after endstream
-    let endObjPos = endStreamPos + EM.length;
+    // Find endobj after endstream (endStreamPos = CR/LF before endstream, +1+9 = past 'endstream')
+    let endObjPos = endStreamPos + 1 + ENDSTREAM_KW.length;
     for (let j = endObjPos; j < bytes.length - EO.length; j++) {
       if (matchAt(bytes, j, EO)) { endObjPos = j + EO.length; break; }
     }
