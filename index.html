@@ -2550,20 +2550,23 @@ async function findXFADatasetsStreamInfo(bytes) {
     for (let k = 0; k < marker.length; k++) if (arr[pos+k] !== marker[k]) return false;
     return true;
   }
-  // 'stream' keyword bytes (6)
-  const STREAM_KW = [115,116,114,101,97,109];
-  // 'endstream' bytes (9)
-  const ENDSTREAM_KW = [101,110,100,115,116,114,101,97,109];
-  // endobj text
-  const EO = [101,110,100,111,98,106];
+  const STREAM_KW = [115,116,114,101,97,109];       // 'stream'
+  const ENDSTREAM_KW = [101,110,100,115,116,114,101,97,109]; // 'endstream'
+  const EO = [101,110,100,111,98,106];               // 'endobj'
+
+  // Collect ALL matching XFA datasets streams — used FBARs contain the blank original
+  // (obj 4, small slot) AND the updated datasets (higher obj number, large slot).
+  // Python's pypdf follows the /XFA array reference and always gets the LAST (updated) one.
+  // We replicate that by taking the last match found when scanning the file forward.
+  const allMatches = [];
 
   for (let i = 0; i < bytes.length - 7; i++) {
     if (bytes[i] !== 115) continue;
     if (!matchAt(bytes, i, STREAM_KW)) continue;
-    // Accept stream\r\n or stream\n (real FinCEN PDFs use LF-only)
+    // Accept stream\r\n or stream\n
     let streamDataStart = -1;
-    if (bytes[i+6] === 13 && bytes[i+7] === 10) streamDataStart = i + 8; // CRLF
-    else if (bytes[i+6] === 10) streamDataStart = i + 7;                  // LF only
+    if (bytes[i+6] === 13 && bytes[i+7] === 10) streamDataStart = i + 8;
+    else if (bytes[i+6] === 10) streamDataStart = i + 7;
     if (streamDataStart < 0) continue;
     // Find endstream — preceded by \r or \n
     let endStreamPos = -1;
@@ -2577,19 +2580,15 @@ async function findXFADatasetsStreamInfo(bytes) {
     const text = await tryDecompressChunk(chunk);
     if (!text) continue;
     const normalized = text.replace(/\n>/g, '>').replace(/\r>/g, '>');
-    // Match any valid FBAR XFA stream — don't require FinInstName (trusts may have 0 accounts)
     if (!normalized.includes('<xfa:datasets') || !normalized.includes('ffbar:BSAForm')) continue;
 
-    // Found the datasets stream — now find the object header by scanning backward
+    // Scan backward for obj header — handle both \r-only and \n line endings
     let objStart = -1, objNum = 0, objGen = 0;
-    // Scan backward from i to find a line ending with 'obj\r'
     for (let back = i - 1; back >= 0; back--) {
-      if (bytes[back] !== 10) continue; // look for newline
-      // Check the bytes from back+1 for "N G obj\r" pattern
+      if (bytes[back] !== 10 && bytes[back] !== 13) continue; // CR or LF
       let lineEnd = back + 1;
       while (lineEnd < i && bytes[lineEnd] !== 13 && bytes[lineEnd] !== 10) lineEnd++;
-      const lineBytes = bytes.slice(back + 1, lineEnd);
-      const lineStr = new TextDecoder().decode(lineBytes);
+      const lineStr = new TextDecoder().decode(bytes.slice(back + 1, lineEnd));
       const m = lineStr.match(/^(\d+)\s+(\d+)\s+obj\s*$/);
       if (m) {
         objNum = parseInt(m[1]);
@@ -2600,73 +2599,28 @@ async function findXFADatasetsStreamInfo(bytes) {
     }
     if (objStart < 0) continue;
 
-    // Find endobj after endstream (endStreamPos = CR/LF before endstream, +1+9 = past 'endstream')
+    // Find endobj after endstream
     let endObjPos = endStreamPos + 1 + ENDSTREAM_KW.length;
     for (let j = endObjPos; j < bytes.length - EO.length; j++) {
       if (matchAt(bytes, j, EO)) { endObjPos = j + EO.length; break; }
     }
-    // slotEnd = start of NEXT PDF object — mirrors Python's all_direct_offsets[idx+1]
-    // Parse xref table at startxref to get exact object offsets (same as pypdf.xref).
-    // Byte scanning misses null-byte padding between objects and under-reports slot size.
-    let slotEnd = endObjPos; // fallback
-    try {
-      // 1. Find startxref value near end of PDF
-      const tail = new TextDecoder('latin1').decode(bytes.slice(Math.max(0, bytes.length - 1024)));
-      const sxMatch = /startxref\s+(\d+)\s+%%EOF/.exec(tail);
-      if (sxMatch) {
-        const xrefOff = parseInt(sxMatch[1]);
-        const xrefHeader = new TextDecoder('latin1').decode(bytes.slice(xrefOff, xrefOff + 20));
-        const allOffsets = [];
-        if (xrefHeader.startsWith('xref')) {
-          // Traditional xref table: parse subsections
-          let pos = xrefOff + 4;
-          while (pos < bytes.length) {
-            // Skip whitespace
-            while (pos < bytes.length && (bytes[pos] === 13 || bytes[pos] === 10 || bytes[pos] === 32)) pos++;
-            // Read line
-            let le = pos;
-            while (le < bytes.length && bytes[le] !== 13 && bytes[le] !== 10) le++;
-            const line = new TextDecoder('latin1').decode(bytes.slice(pos, le)).trim();
-            if (line === 'trailer' || line === '') break;
-            const subHdr = line.match(/^(\d+)\s+(\d+)$/);
-            if (subHdr) {
-              const count = parseInt(subHdr[2]);
-              pos = le;
-              for (let k = 0; k < count; k++) {
-                while (pos < bytes.length && (bytes[pos] === 13 || bytes[pos] === 10)) pos++;
-                let entEnd = pos;
-                while (entEnd < bytes.length && bytes[entEnd] !== 13 && bytes[entEnd] !== 10) entEnd++;
-                const entry = new TextDecoder('latin1').decode(bytes.slice(pos, entEnd)).trim();
-                pos = entEnd;
-                const parts = entry.split(/\s+/);
-                if (parts.length === 3 && parts[2] === 'n') {
-                  allOffsets.push(parseInt(parts[0]));
-                }
-              }
-            } else {
-              pos = le;
-            }
-          }
-        } else {
-          // Compressed xref stream — fall back: scan whole file for "N G obj\n" headers
-          const fullText = new TextDecoder('latin1').decode(bytes);
-          const re = /\n(\d+)\s+\d+\s+obj\b/g;
-          let m2;
-          while ((m2 = re.exec(fullText)) !== null) allOffsets.push(m2.index + 1);
-        }
-        if (allOffsets.length > 0) {
-          allOffsets.sort((a, b) => a - b);
-          const idx2 = allOffsets.indexOf(objStart);
-          if (idx2 >= 0 && idx2 + 1 < allOffsets.length) {
-            slotEnd = allOffsets[idx2 + 1];
-          }
-        }
-      }
-    } catch(_) { /* keep fallback slotEnd */ }
+    // slotEnd = start of next PDF object — scan forward for next "N G obj" header.
+    // Real FinCEN FBARs use \r as line separator; must handle both \r and \n.
+    let slotEnd = endObjPos;
+    for (let j = endObjPos; j < Math.min(endObjPos + 8192, bytes.length - 10); j++) {
+      if (bytes[j] !== 13 && bytes[j] !== 10) continue;
+      let le = j + 1;
+      while (le < bytes.length && bytes[le] !== 13 && bytes[le] !== 10) le++;
+      const lineStr = new TextDecoder().decode(bytes.slice(j + 1, Math.min(le, j + 61)));
+      if (/^\d+\s+\d+\s+obj\b/.test(lineStr)) { slotEnd = j + 1; break; }
+    }
 
-    return { objStart, objNum, objGen, slotEnd, currentXML: normalized };
+    allMatches.push({ objStart, objNum, objGen, slotEnd, currentXML: normalized });
   }
-  return null;
+
+  // Return the LAST match — mirrors Python which resolves the /XFA 'datasets' reference
+  // via xref. In Acrobat-updated FBARs the active datasets object is always the latest one.
+  return allMatches.length > 0 ? allMatches[allMatches.length - 1] : null;
 }
 
 async function generateRealFbarPdf() {
