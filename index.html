@@ -1964,18 +1964,25 @@ function wordOverlap(a, b) {
 }
 
 function findBestAccountMatch(name, accounts, number) {
-  // Prefer exact account number match when available
-  if (number) {
-    const numDigits = String(number).replace(/[^0-9]/g,'');
-    if (numDigits.length >= 4) {
-      const byNum = accounts.find(a => {
-        const aDigits = (a.number || '').replace(/[^0-9]/g,'');
-        return aDigits.length >= 4 && aDigits.slice(-4) === numDigits.slice(-4);
-      });
-      if (byNum) return { acct: byNum, score: 1.0 };
+  const rowDigits = number ? String(number).replace(/[^0-9]/g,'') : '';
+  if (rowDigits.length >= 4) {
+    // Prefer exact account number match
+    const byNum = accounts.find(a => {
+      const aDigits = (a.number || '').replace(/[^0-9]/g,'');
+      return aDigits.length >= 4 && aDigits.slice(-4) === rowDigits.slice(-4);
+    });
+    if (byNum) return { acct: byNum, score: 1.0 };
+    // Row has a known number but nothing matched — only name-match against accounts that lack numbers
+    // (avoids merging two different-numbered accounts at the same institution)
+    const unnumbered = accounts.filter(a => (a.number || '').replace(/[^0-9]/g,'').length < 4);
+    let best = null, bestScore = 0;
+    for (const acct of unnumbered) {
+      const s = wordOverlap(name, acct.name);
+      if (s > bestScore) { bestScore = s; best = acct; }
     }
+    return bestScore >= 0.4 ? { acct: best, score: bestScore } : null;
   }
-  // Fall back to name similarity
+  // No account number in row — fall back to name similarity across all accounts
   let best = null, bestScore = 0;
   for (const acct of accounts) {
     const s = wordOverlap(name, acct.name);
