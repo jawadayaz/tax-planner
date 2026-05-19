@@ -2606,17 +2606,63 @@ async function findXFADatasetsStreamInfo(bytes) {
       if (matchAt(bytes, j, EO)) { endObjPos = j + EO.length; break; }
     }
     // slotEnd = start of NEXT PDF object — mirrors Python's all_direct_offsets[idx+1]
-    // Scan forward past endobj looking for next "N G obj" line header.
-    // This correctly includes null-byte padding that PDF generators put between objects,
-    // which a simple whitespace-skip would miss and under-report the slot size.
-    let slotEnd = endObjPos;
-    for (let j = endObjPos; j < Math.min(endObjPos + 8192, bytes.length - 10); j++) {
-      if (bytes[j] < 0x30 || bytes[j] > 0x39) continue; // not a digit
-      let le = j;
-      while (le < bytes.length && bytes[le] !== 13 && bytes[le] !== 10) le++;
-      const lineStr = new TextDecoder().decode(bytes.slice(j, Math.min(le, j + 60)));
-      if (/^\d+\s+\d+\s+obj\b/.test(lineStr)) { slotEnd = j; break; }
-    }
+    // Parse xref table at startxref to get exact object offsets (same as pypdf.xref).
+    // Byte scanning misses null-byte padding between objects and under-reports slot size.
+    let slotEnd = endObjPos; // fallback
+    try {
+      // 1. Find startxref value near end of PDF
+      const tail = new TextDecoder('latin1').decode(bytes.slice(Math.max(0, bytes.length - 1024)));
+      const sxMatch = /startxref\s+(\d+)\s+%%EOF/.exec(tail);
+      if (sxMatch) {
+        const xrefOff = parseInt(sxMatch[1]);
+        const xrefHeader = new TextDecoder('latin1').decode(bytes.slice(xrefOff, xrefOff + 20));
+        const allOffsets = [];
+        if (xrefHeader.startsWith('xref')) {
+          // Traditional xref table: parse subsections
+          let pos = xrefOff + 4;
+          while (pos < bytes.length) {
+            // Skip whitespace
+            while (pos < bytes.length && (bytes[pos] === 13 || bytes[pos] === 10 || bytes[pos] === 32)) pos++;
+            // Read line
+            let le = pos;
+            while (le < bytes.length && bytes[le] !== 13 && bytes[le] !== 10) le++;
+            const line = new TextDecoder('latin1').decode(bytes.slice(pos, le)).trim();
+            if (line === 'trailer' || line === '') break;
+            const subHdr = line.match(/^(\d+)\s+(\d+)$/);
+            if (subHdr) {
+              const count = parseInt(subHdr[2]);
+              pos = le;
+              for (let k = 0; k < count; k++) {
+                while (pos < bytes.length && (bytes[pos] === 13 || bytes[pos] === 10)) pos++;
+                let entEnd = pos;
+                while (entEnd < bytes.length && bytes[entEnd] !== 13 && bytes[entEnd] !== 10) entEnd++;
+                const entry = new TextDecoder('latin1').decode(bytes.slice(pos, entEnd)).trim();
+                pos = entEnd;
+                const parts = entry.split(/\s+/);
+                if (parts.length === 3 && parts[2] === 'n') {
+                  allOffsets.push(parseInt(parts[0]));
+                }
+              }
+            } else {
+              pos = le;
+            }
+          }
+        } else {
+          // Compressed xref stream — fall back: scan whole file for "N G obj\n" headers
+          const fullText = new TextDecoder('latin1').decode(bytes);
+          const re = /\n(\d+)\s+\d+\s+obj\b/g;
+          let m2;
+          while ((m2 = re.exec(fullText)) !== null) allOffsets.push(m2.index + 1);
+        }
+        if (allOffsets.length > 0) {
+          allOffsets.sort((a, b) => a - b);
+          const idx2 = allOffsets.indexOf(objStart);
+          if (idx2 >= 0 && idx2 + 1 < allOffsets.length) {
+            slotEnd = allOffsets[idx2 + 1];
+          }
+        }
+      }
+    } catch(_) { /* keep fallback slotEnd */ }
 
     return { objStart, objNum, objGen, slotEnd, currentXML: normalized };
   }
