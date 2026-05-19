@@ -255,11 +255,11 @@ const GIFTS = [
 // ─── FBAR FILERS ──────────────────────────────────────────────────────────────
 // active:true = shown now; active:false = future (add when they have India accounts)
 const FBAR_FILERS = [
-  { id:'jawad',        label:'Jawad Ayaz',       active:true  },
-  { id:'chhaya',       label:'Chhaya Ayaz',      active:true  },
-  { id:'mariam_trust', label:'Mariam Ayaz Trust', active:true  },
-  { id:'sakina',       label:'Sakina Ayaz',       active:false },
-  { id:'aliza',        label:'Aliza Ayaz',        active:false },
+  { id:'jawad',        label:'Jawad Ayaz',       csvName:'Jawad Ayaz',        filePrefix:'Jawad',   active:true  },
+  { id:'chhaya',       label:'Chhaya Ayaz',       csvName:'Chhaya Ayaz',       filePrefix:'Chhaya',  active:true  },
+  { id:'mariam_trust', label:'Mariam Ayaz Trust', csvName:'Mariam Ayaz Trust', filePrefix:'MAT',     active:true  },
+  { id:'sakina',       label:'Sakina Ayaz',        csvName:'Sakina Ayaz',       filePrefix:'Sakina',  active:false },
+  { id:'aliza',        label:'Aliza Ayaz',         csvName:'Aliza Ayaz',        filePrefix:'Aliza',   active:false },
 ];
 
 // ─── GLOBAL WORKER (centralized secrets hub) ─────────────────────────────────
@@ -1207,6 +1207,19 @@ function parseFilerInfoXFA(text) {
   };
 }
 
+function detectFilerIdFromInfo(fi) {
+  if (!fi) return null;
+  const full = ((fi.first_name || '') + ' ' + (fi.last_name || '')).trim();
+  const org = fi.filing_name_base || '';
+  for (const f of FBAR_FILERS) {
+    if (!f.csvName) continue;
+    const cn = f.csvName.toLowerCase();
+    if (full && (full.toLowerCase() === cn || cn.includes(full.toLowerCase()))) return f.id;
+    if (org && (org.toLowerCase() === cn || cn.includes(org.toLowerCase()))) return f.id;
+  }
+  return null;
+}
+
 // Parse FBAR accounts from plain PDF text (fallback when XFA not present).
 // Handles FinCEN 114 PDFs exported from BSA e-filing (field-label/value layout).
 function parseFbarTextAccounts(text) {
@@ -1873,6 +1886,7 @@ async function parseSummaryFileRich(file) {
         return -1;
       })(),
       password:  col(['password','pwd','pass','pdf password','statement password']),
+      filer:     col(['filer']),
     };
     // Extract FX rate from headers if present
     let csvRate = null;
@@ -1911,7 +1925,7 @@ async function parseSummaryFileRich(file) {
         if (!passwordMap[suffix]) passwordMap[suffix] = [];
         if (!passwordMap[suffix].includes(password)) passwordMap[suffix].push(password);
       }
-      rows.push({ name, number, suffix, type, ownership, balUSD, password });
+      rows.push({ name, number, suffix, type, ownership, balUSD, password, filerName: ci.filer >= 0 ? String(row[ci.filer] || '').trim() : '' });
     }
   }
   return { rows, passwordMap };
@@ -1978,38 +1992,66 @@ async function runMatch() {
   const statementObjs  = fbarFileObjects.filter((_, i) => fb.files[i]?.fileType === 'statement');
   const statementMeta  = fb.files.map((f, i) => f.fileType === 'statement' ? i : -1).filter(i => i >= 0);
 
-  // ── Step 1: extract accounts from prev FBAR (rich) ──
+  // ── Step 1: extract accounts from prev FBAR (rich), per-filer ──
   let baseAccounts = fb.accounts.filter(a => a.status === 'manual').map(a => ({...a}));
   fb.matchLog.push('Step 1 — Parsing prev year FBAR(s)…');
   render();
 
-  let filerInfoSet = false;
+  // Per-filer maps: filerId → array of accounts / filerInfo object / fileIndex
+  const pfAccounts = {};    // filerId → []
+  const pfInfo = {};        // filerId → filerInfo
+  const pfTemplateIdx = {}; // filerId → index in fbarFileObjects (for template selection)
+  const pfSlotSize = {};    // filerId → best slot size seen
+
   for (let pi = 0; pi < prevFbarObjs.length; pi++) {
     const file = prevFbarObjs[pi];
+    // Map back to the global fbarFileObjects index
+    const globalIdx = prevFbarMeta[pi];
     try {
       fb.matchLog.push('  Reading ' + file.name + '…'); render();
       const text = await extractTextFromFile(file);
-      // Parse filer info from first FBAR only
-      if (!filerInfoSet) {
-        const fi = parseFilerInfoXFA(text);
-        if (fi) { fb.filerInfo = fi; filerInfoSet = true; }
+
+      // Detect which filer this PDF belongs to
+      const fi = parseFilerInfoXFA(text);
+      let filerId = detectFilerIdFromInfo(fi);
+      if (!filerId) filerId = fb.filer || 'jawad'; // fallback
+      fb.matchLog.push('  Detected filer: ' + filerId + (fi ? ' (' + (fi.first_name || '') + ' ' + (fi.last_name || fi.filing_name_base || '') + ')' : ''));
+
+      // Store filerInfo per filerId (first seen wins)
+      if (!pfInfo[filerId] && fi) pfInfo[filerId] = fi;
+
+      // Track best template (largest XFA slot) per filer
+      try {
+        const tmpBuf = await file.arrayBuffer();
+        const tmpInfo = await findXFADatasetsStreamInfo(new Uint8Array(tmpBuf));
+        if (tmpInfo) {
+          const slot = tmpInfo.slotEnd - tmpInfo.objStart;
+          if (!pfSlotSize[filerId] || slot > pfSlotSize[filerId]) {
+            pfSlotSize[filerId] = slot;
+            pfTemplateIdx[filerId] = globalIdx;
+          }
+        }
+      } catch(_e) {
+        // If slot check fails, still record this as the template if none set
+        if (pfTemplateIdx[filerId] === undefined) pfTemplateIdx[filerId] = globalIdx;
       }
+
       // Use rich parse for full fields
       const richParsed = tryParseXFAAccountsRich(text);
       const parsed = richParsed.length > 0 ? richParsed : (tryParseXFAAccounts(text).length > 0 ? tryParseXFAAccounts(text).map(p => ({...p, block_type:'FinAcctOwnedSeparately', acct_type_code:'B', suffix:'', addr:'', city:'', state:'', zip:'', country:'', n_joint_owners:'', joint_tin:'', joint_tin_type:'', joint_last:'', joint_first:'', joint_country:''})) : parseFbarTextAccounts(text).map(p => ({...p, block_type:'FinAcctOwnedSeparately', acct_type_code:'B', suffix:'', addr:'', city:'', state:'', zip:'', country:'', n_joint_owners:'', joint_tin:'', joint_tin_type:'', joint_last:'', joint_first:'', joint_country:''})));
       fb.matchLog.push('  Found ' + parsed.length + ' account(s)');
+
+      if (!pfAccounts[filerId]) pfAccounts[filerId] = [];
       for (const p of parsed) {
         if (!p.name || String(p.name).trim().length < 2) continue;
         const pSuffix = p.suffix || (p.number || '').replace(/[^0-9]/g,'').slice(-4);
-        const exists = baseAccounts.find(a => {
+        const exists = pfAccounts[filerId].find(a => {
           const aSuffix = a.suffix || (a.number || '').replace(/[^0-9]/g,'').slice(-4);
-          if (pSuffix.length >= 4 && aSuffix.length >= 4) {
-            return pSuffix === aSuffix;
-          }
+          if (pSuffix.length >= 4 && aSuffix.length >= 4) return pSuffix === aSuffix;
           return wordOverlap(p.name, a.name) >= 0.6 && !pSuffix && !aSuffix;
         });
         if (!exists) {
-          baseAccounts.push({
+          pfAccounts[filerId].push({
             id: Math.random().toString(36).slice(2,8),
             name: String(p.name).trim(),
             type: p.type || 'bank',
@@ -2024,12 +2066,41 @@ async function runMatch() {
             joint_last: p.joint_last || '', joint_first: p.joint_first || '', joint_country: p.joint_country || '',
             prevMax: p.max_value_usd || null,
             newMax: null, status: 'needs_update', source: null, include: true,
+            filer_id: filerId,
           });
         }
       }
     } catch(e) { fb.matchLog.push('  Error: ' + e.message); }
   }
-  fb.matchLog.push('  Total after FBAR parse: ' + baseAccounts.length + ' account(s)');
+
+  // Flatten per-filer accounts into baseAccounts (all tagged with filer_id)
+  for (const fid of Object.keys(pfAccounts)) {
+    for (const acct of pfAccounts[fid]) {
+      const exists = baseAccounts.find(a => {
+        const aSuffix = a.suffix || (a.number || '').replace(/[^0-9]/g,'').slice(-4);
+        const pSuffix = acct.suffix;
+        if (pSuffix && pSuffix.length >= 4 && aSuffix && aSuffix.length >= 4) return pSuffix === aSuffix;
+        return wordOverlap(acct.name, a.name) >= 0.6 && !pSuffix && !aSuffix;
+      });
+      if (!exists) baseAccounts.push(acct);
+    }
+  }
+
+  // Also tag any manual accounts that don't yet have filer_id
+  for (const a of baseAccounts) {
+    if (!a.filer_id) a.filer_id = fb.filer || 'jawad';
+  }
+
+  // Store per-filer data for generate step
+  fb._perFilerTemplateIdx = pfTemplateIdx;
+  fb._perFilerInfo = pfInfo;
+
+  // Backward-compat: set fb.filerInfo from current filer
+  const curFiler = fb.filer || 'jawad';
+  if (pfInfo[curFiler]) fb.filerInfo = pfInfo[curFiler];
+  else if (Object.keys(pfInfo).length > 0) fb.filerInfo = pfInfo[Object.keys(pfInfo)[0]];
+
+  fb.matchLog.push('  Total after FBAR parse: ' + baseAccounts.length + ' account(s) across ' + Object.keys(pfAccounts).length + ' filer(s)');
 
   // ── Step 2: match with summary (CSV — priority 2, can be overridden by statement) ──
   fb.matchLog.push('\nStep 2 — Matching with summary file(s)…');
@@ -2051,8 +2122,17 @@ async function runMatch() {
       let matched = 0, added = 0;
       for (const row of rows) {
         if (!row.name) continue;
+        // Determine filer_id for this CSV row from its filerName column
+        let rowFilerId = null;
+        if (row.filerName) {
+          const fn = row.filerName.toLowerCase();
+          const match = FBAR_FILERS.find(f => f.csvName && f.csvName.toLowerCase() === fn);
+          if (match) rowFilerId = match.id;
+        }
+        // Restrict matching pool to same filer if known, else all accounts
+        const matchPool = rowFilerId ? baseAccounts.filter(a => a.filer_id === rowFilerId) : baseAccounts;
         // Match by suffix first, then name
-        const m = findBestAccountMatch(row.name, baseAccounts, row.number);
+        const m = findBestAccountMatch(row.name, matchPool, row.number);
         if (m) {
           // Only set newMax from CSV if newMax is currently null (statement will override later)
           if (m.acct.newMax == null) {
@@ -2063,10 +2143,13 @@ async function runMatch() {
           if (row.number && !m.acct.number) m.acct.number = row.number;
           if (row.suffix && !m.acct.suffix) m.acct.suffix = row.suffix;
           if (row.type) m.acct.type = row.type;
+          // Tag filer_id if not already set
+          if (rowFilerId && !m.acct.filer_id) m.acct.filer_id = rowFilerId;
           fb.matchLog.push('  ✓ ' + row.name + (row.balUSD ? ' → ' + fmtUSD(row.balUSD) : ''));
           matched++;
         } else {
           const ownership = row.ownership || 'sole';
+          const newFidForAcct = rowFilerId || fb.filer || 'jawad';
           baseAccounts.push({
             id: Math.random().toString(36).slice(2,8),
             name: row.name, type: row.type || 'bank', number: row.number || '',
@@ -2078,6 +2161,7 @@ async function runMatch() {
             n_joint_owners: '', joint_tin: '', joint_tin_type: '', joint_last: '', joint_first: '', joint_country: '',
             prevMax: null, newMax: row.balUSD,
             status: 'new', source: 'csv', include: true,
+            filer_id: newFidForAcct,
           });
           fb.matchLog.push('  + New: ' + row.name + (row.balUSD ? ' ' + fmtUSD(row.balUSD) : ''));
           added++;
@@ -2652,58 +2736,125 @@ async function findXFADatasetsStreamInfo(bytes) {
 
 async function generateRealFbarPdf() {
   const fb = S.fbar;
-  // Pick the prev_fbar template with the LARGEST XFA slot — mirrors Python which uses
-  // the filled FBAR (large slot) not the blank form (small slot like NFFBAR, 1144 bytes).
-  let tmplIdx = -1;
-  let bestSlotSize = 0;
-  for (let i = 0; i < fbarFileObjects.length; i++) {
-    if (fb.files[i]?.fileType !== 'prev_fbar') continue;
-    const tmpBuf = await fbarFileObjects[i].arrayBuffer();
-    const tmpInfo = await findXFADatasetsStreamInfo(new Uint8Array(tmpBuf));
-    if (tmpInfo) {
-      const slot = tmpInfo.slotEnd - tmpInfo.objStart;
-      if (slot > bestSlotSize) { bestSlotSize = slot; tmplIdx = i; }
-    }
-  }
-  if (tmplIdx < 0) { alert('Please upload a previous year FBAR PDF first.'); return; }
 
   const genBtn = document.getElementById('fbarGeneratePdfBtn');
   if (genBtn) { genBtn.disabled = true; genBtn.textContent = '⏳ Generating…'; }
 
   try {
-    const templateFile = fbarFileObjects[tmplIdx];
-    const buf = await templateFile.arrayBuffer();
-    const bytes = new Uint8Array(buf);
+    // ── Per-filer mode: use pfTemplateIdx built during runMatch ──
+    const perFilerTemplateIdx = fb._perFilerTemplateIdx || {};
+    const perFilerInfo = fb._perFilerInfo || {};
+    const filerIds = Object.keys(perFilerTemplateIdx);
 
-    const dsInfo = await findXFADatasetsStreamInfo(bytes);
-    if (!dsInfo) throw new Error('Could not locate XFA datasets stream in PDF template.');
+    if (filerIds.length === 0) {
+      // ── Fallback: single-filer mode (no runMatch data) ──
+      // Pick the prev_fbar template with the LARGEST XFA slot
+      let tmplIdx = -1;
+      let bestSlotSize = 0;
+      for (let i = 0; i < fbarFileObjects.length; i++) {
+        if (fb.files[i]?.fileType !== 'prev_fbar') continue;
+        const tmpBuf = await fbarFileObjects[i].arrayBuffer();
+        const tmpInfo = await findXFADatasetsStreamInfo(new Uint8Array(tmpBuf));
+        if (tmpInfo) {
+          const slot = tmpInfo.slotEnd - tmpInfo.objStart;
+          if (slot > bestSlotSize) { bestSlotSize = slot; tmplIdx = i; }
+        }
+      }
+      if (tmplIdx < 0) { throw new Error('Please upload a previous year FBAR PDF first.'); }
 
-    const filerInfo = fb.filerInfo || parseFilerInfoXFA(dsInfo.currentXML);
-    const included = fb.accounts.filter(a => a.include !== false && a.newMax != null);
-    if (included.length === 0) throw new Error('No accounts with balances to include.');
+      const templateFile = fbarFileObjects[tmplIdx];
+      const buf = await templateFile.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      const dsInfo = await findXFADatasetsStreamInfo(bytes);
+      if (!dsInfo) throw new Error('Could not locate XFA datasets stream in PDF template.');
 
-    const newXML = buildNewDatasetsXML(filerInfo, included, fb.year);
-    const compressed = await compressXmlStr(newXML);
-    const newObjBytes = buildEmbeddedFileObjBytes(dsInfo.objNum, dsInfo.objGen, compressed);
+      const filerInfo = fb.filerInfo || parseFilerInfoXFA(dsInfo.currentXML);
+      const included = fb.accounts.filter(a => a.include !== false && a.newMax != null);
+      if (included.length === 0) throw new Error('No accounts with balances to include.');
 
-    const slotSize = dsInfo.slotEnd - dsInfo.objStart;
-    if (newObjBytes.length > slotSize) {
-      throw new Error('New XML is too large for the PDF slot (' + newObjBytes.length + ' vs ' + slotSize + ' bytes). Reduce the number of accounts or use a larger template.');
+      const newXML = buildNewDatasetsXML(filerInfo, included, fb.year);
+      const compressed = await compressXmlStr(newXML);
+      const newObjBytes = buildEmbeddedFileObjBytes(dsInfo.objNum, dsInfo.objGen, compressed);
+      const slotSize = dsInfo.slotEnd - dsInfo.objStart;
+      if (newObjBytes.length > slotSize) {
+        throw new Error('New XML is too large for the PDF slot (' + newObjBytes.length + ' vs ' + slotSize + ' bytes). Reduce the number of accounts or use a larger template.');
+      }
+      const outBytes = new Uint8Array(bytes);
+      outBytes.set(newObjBytes, dsInfo.objStart);
+      for (let k = dsInfo.objStart + newObjBytes.length; k < dsInfo.slotEnd; k++) outBytes[k] = 0x20;
+
+      // Use filePrefix from FBAR_FILERS if possible, else fall back to last_name
+      const detectedId = detectFilerIdFromInfo(filerInfo);
+      const filerDef = FBAR_FILERS.find(f => f.id === detectedId);
+      const filerPrefix = filerDef ? filerDef.filePrefix : (filerInfo && filerInfo.last_name ? filerInfo.last_name : 'FBAR');
+      const filename = filerPrefix + 'FBAR' + fb.year + '.pdf';
+      const blob = new Blob([outBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } else {
+      // ── Multi-filer mode: generate one PDF per filer ──
+      let anyGenerated = false;
+      const errors = [];
+      for (const filerId of filerIds) {
+        try {
+          const tmplIdx = perFilerTemplateIdx[filerId];
+          if (tmplIdx === undefined || tmplIdx < 0 || !fbarFileObjects[tmplIdx]) {
+            errors.push(filerId + ': no template file found');
+            continue;
+          }
+          const filerInfo = perFilerInfo[filerId] || fb.filerInfo;
+          const included = fb.accounts.filter(a => a.filer_id === filerId && a.include !== false && a.newMax != null);
+          if (included.length === 0) {
+            // If no tagged accounts, fall back to all included accounts (for single-filer backward compat)
+            const allIncluded = fb.accounts.filter(a => a.include !== false && a.newMax != null && !a.filer_id);
+            if (allIncluded.length === 0) {
+              errors.push(filerId + ': no accounts with balances');
+              continue;
+            }
+            included.push(...allIncluded);
+          }
+
+          const templateFile = fbarFileObjects[tmplIdx];
+          const buf = await templateFile.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          const dsInfo = await findXFADatasetsStreamInfo(bytes);
+          if (!dsInfo) { errors.push(filerId + ': could not locate XFA datasets stream'); continue; }
+
+          const newXML = buildNewDatasetsXML(filerInfo, included, fb.year);
+          const compressed = await compressXmlStr(newXML);
+          const newObjBytes = buildEmbeddedFileObjBytes(dsInfo.objNum, dsInfo.objGen, compressed);
+          const slotSize = dsInfo.slotEnd - dsInfo.objStart;
+          if (newObjBytes.length > slotSize) {
+            errors.push(filerId + ': new XML too large (' + newObjBytes.length + ' vs ' + slotSize + ' bytes)');
+            continue;
+          }
+
+          const outBytes = new Uint8Array(bytes);
+          outBytes.set(newObjBytes, dsInfo.objStart);
+          for (let k = dsInfo.objStart + newObjBytes.length; k < dsInfo.slotEnd; k++) outBytes[k] = 0x20;
+
+          const filerDef = FBAR_FILERS.find(f => f.id === filerId);
+          const filerPrefix = filerDef ? filerDef.filePrefix : filerId;
+          const filename = filerPrefix + 'FBAR' + fb.year + '.pdf';
+          const blob = new Blob([outBytes], { type: 'application/pdf' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = filename; a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 5000);
+          anyGenerated = true;
+        } catch(e) {
+          errors.push(filerId + ': ' + e.message);
+        }
+      }
+      if (errors.length > 0) {
+        throw new Error('Errors during generation:\n' + errors.join('\n'));
+      }
+      if (!anyGenerated) {
+        throw new Error('No PDFs were generated. Check that accounts have balances and prev FBAR templates are uploaded.');
+      }
     }
-
-    // Create copy and overwrite
-    const outBytes = new Uint8Array(bytes);
-    outBytes.set(newObjBytes, dsInfo.objStart);
-    // Pad remainder with spaces
-    for (let k = dsInfo.objStart + newObjBytes.length; k < dsInfo.slotEnd; k++) outBytes[k] = 0x20;
-
-    const filerLabel = filerInfo ? (filerInfo.last_name ? filerInfo.last_name + '_' : '') : '';
-    const filename = filerLabel + 'FBAR' + fb.year + '.pdf';
-    const blob = new Blob([outBytes], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
 
     fb.completed = true;
     saveFbarData();
