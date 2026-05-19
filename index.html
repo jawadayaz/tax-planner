@@ -2652,8 +2652,19 @@ async function findXFADatasetsStreamInfo(bytes) {
 
 async function generateRealFbarPdf() {
   const fb = S.fbar;
-  // Find template prev FBAR
-  const tmplIdx = fbarFileObjects.findIndex((_, i) => fb.files[i]?.fileType === 'prev_fbar');
+  // Pick the prev_fbar template with the LARGEST XFA slot — mirrors Python which uses
+  // the filled FBAR (large slot) not the blank form (small slot like NFFBAR, 1144 bytes).
+  let tmplIdx = -1;
+  let bestSlotSize = 0;
+  for (let i = 0; i < fbarFileObjects.length; i++) {
+    if (fb.files[i]?.fileType !== 'prev_fbar') continue;
+    const tmpBuf = await fbarFileObjects[i].arrayBuffer();
+    const tmpInfo = await findXFADatasetsStreamInfo(new Uint8Array(tmpBuf));
+    if (tmpInfo) {
+      const slot = tmpInfo.slotEnd - tmpInfo.objStart;
+      if (slot > bestSlotSize) { bestSlotSize = slot; tmplIdx = i; }
+    }
+  }
   if (tmplIdx < 0) { alert('Please upload a previous year FBAR PDF first.'); return; }
 
   const genBtn = document.getElementById('fbarGeneratePdfBtn');
