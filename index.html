@@ -320,10 +320,10 @@ function loadFbarData(filer, year) {
       }));
       return { filer, year, accounts: carried, fxRate: null, files: [], currentYearFiles: [], matchRan: false,
         completed: false, _carriedFrom: year - 1, balCurrency: 'inr', matchLog: [],
-        filerInfo: null, flags: [], passwordMap: {} };
+        pdfPasswords: [], filerInfo: null, flags: [], passwordMap: {} };
     }
   } catch(e) {}
-  return { filer, year, accounts: [], files: [], currentYearFiles: [], fxRate: null, matchRan: false, completed: false, balCurrency: 'inr', matchLog: [], filerInfo: null, flags: [], passwordMap: {} };
+  return { filer, year, accounts: [], files: [], currentYearFiles: [], fxRate: null, matchRan: false, completed: false, balCurrency: 'inr', matchLog: [], pdfPasswords: [], filerInfo: null, flags: [], passwordMap: {} };
 }
 
 function switchFbarFiler(filerId) {
@@ -2355,9 +2355,15 @@ async function runMatch() {
     if (slot > bestFallbackSlot) { bestFallbackSlot = slot; bestFallbackTmplIdx = idx; }
   }
 
+  const MIN_USEFUL_SLOT = 2000; // Anything smaller (e.g. blank NFFBAR at 1144 bytes) is unusable as a template
   for (const filerDef of FBAR_FILERS) {
     if (!filerDef.active) continue;
-    if (pfTemplateIdx[filerDef.id] !== undefined) continue; // already has template from prev FBAR
+    const existingSlot = pfSlotSize[filerDef.id] || 0;
+    if (pfTemplateIdx[filerDef.id] !== undefined && existingSlot >= MIN_USEFUL_SLOT) continue; // has usable template
+    if (pfTemplateIdx[filerDef.id] !== undefined && existingSlot < MIN_USEFUL_SLOT) {
+      // Template exists but slot is too small (e.g. blank NFFBAR) — will use bestFallbackTmplIdx below
+      fb.matchLog.push('  Note: ' + filerDef.label + ' template slot too small (' + existingSlot + ' bytes) — using fallback template');
+    }
     // Check if any baseAccounts belong to this filer
     const filerAccounts = baseAccounts.filter(a => a.filer_id === filerDef.id);
     if (filerAccounts.length === 0) continue;
