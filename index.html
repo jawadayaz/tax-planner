@@ -2568,11 +2568,38 @@ async function findXFADatasetsStreamInfo(bytes) {
     if (bytes[i+6] === 13 && bytes[i+7] === 10) streamDataStart = i + 8;
     else if (bytes[i+6] === 10) streamDataStart = i + 7;
     if (streamDataStart < 0) continue;
-    // Find endstream — preceded by \r or \n
+    // Extract /Length from the preceding stream dict so we can locate the actual endstream
+    // without being fooled by false \rendstream or \nendstream patterns inside compressed data.
+    let streamLength = -1;
+    {
+      const de = i - 1; // byte just before 'stream' keyword (should be second '>')
+      if (de >= 1 && bytes[de] === 62 && bytes[de - 1] === 62) { // >>
+        for (let k = de - 2; k >= Math.max(0, i - 1024); k--) {
+          if (bytes[k] === 60 && bytes[k + 1] === 60) { // <<
+            const dictStr = new TextDecoder().decode(bytes.slice(k, de + 1));
+            const lm = dictStr.match(/\/Length\s+(\d+)/);
+            if (lm) streamLength = parseInt(lm[1]);
+            break;
+          }
+        }
+      }
+    }
+    // Find endstream — use /Length when available (immune to false matches in compressed data);
+    // fall back to byte-scan for PDFs without /Length or with mismatched /Length.
     let endStreamPos = -1;
-    for (let j = streamDataStart; j < bytes.length - ENDSTREAM_KW.length; j++) {
-      if ((bytes[j] === 13 || bytes[j] === 10) && matchAt(bytes, j + 1, ENDSTREAM_KW)) {
-        endStreamPos = j; break;
+    if (streamLength >= 0) {
+      const candidateEnd = streamDataStart + streamLength;
+      if (candidateEnd + ENDSTREAM_KW.length < bytes.length &&
+          (bytes[candidateEnd] === 13 || bytes[candidateEnd] === 10) &&
+          matchAt(bytes, candidateEnd + 1, ENDSTREAM_KW)) {
+        endStreamPos = candidateEnd;
+      }
+    }
+    if (endStreamPos < 0) {
+      for (let j = streamDataStart; j < bytes.length - ENDSTREAM_KW.length; j++) {
+        if ((bytes[j] === 13 || bytes[j] === 10) && matchAt(bytes, j + 1, ENDSTREAM_KW)) {
+          endStreamPos = j; break;
+        }
       }
     }
     if (endStreamPos < 0 || endStreamPos <= streamDataStart) continue;
