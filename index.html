@@ -255,11 +255,11 @@ const GIFTS = [
 // ─── FBAR FILERS ──────────────────────────────────────────────────────────────
 // active:true = shown now; active:false = future (add when they have India accounts)
 const FBAR_FILERS = [
-  { id:'jawad',        label:'Jawad Ayaz',       csvName:'Jawad Ayaz',        filePrefix:'Jawad',   active:true  },
-  { id:'chhaya',       label:'Chhaya Ayaz',       csvName:'Chhaya Ayaz',       filePrefix:'Chhaya',  active:true  },
-  { id:'mariam_trust', label:'Mariam Ayaz Trust', csvName:'Mariam Ayaz Trust', filePrefix:'MAT',     active:true  },
-  { id:'sakina',       label:'Sakina Ayaz',        csvName:'Sakina Ayaz',       filePrefix:'Sakina',  active:false },
-  { id:'aliza',        label:'Aliza Ayaz',         csvName:'Aliza Ayaz',        filePrefix:'Aliza',   active:false },
+  { id:'jawad',        label:'Jawad Ayaz',       csvName:'Jawad Ayaz',        filePrefix:'Jawad',   filingBase:'Jawad',    active:true  },
+  { id:'chhaya',       label:'Chhaya Ayaz',       csvName:'Chhaya Ayaz',       filePrefix:'Chhaya',  filingBase:'Chhaya',   active:true  },
+  { id:'mariam_trust', label:'Mariam Ayaz Trust', csvName:'Mariam Ayaz Trust', filePrefix:'MAT',     filingBase:'MA Trust', active:true  },
+  { id:'sakina',       label:'Sakina Ayaz',        csvName:'Sakina Ayaz',       filePrefix:'Sakina',  filingBase:'Sakina',   active:false },
+  { id:'aliza',        label:'Aliza Ayaz',         csvName:'Aliza Ayaz',        filePrefix:'Aliza',   filingBase:'Aliza',    active:false },
 ];
 
 // ─── GLOBAL WORKER (centralized secrets hub) ─────────────────────────────────
@@ -1184,10 +1184,10 @@ function parseFilerInfoXFA(text) {
   if (!filerM) return null;
   const fblock = filerM[0];
   const tin = getTag(fblock, 'TIN');
-  const tin_type = getTag(fblock, 'TINType');
-  const dob = getTag(fblock, 'DateOfBirth') || getTag(fblock, 'DOB');
-  const last_name = getTag(fblock, 'IndividualLastName') || getTag(fblock, 'LastName');
-  const first_name = getTag(fblock, 'IndividualFirstName') || getTag(fblock, 'FirstName');
+  const tin_type = getTag(fblock, 'TINTYPE') || getTag(fblock, 'TINType');
+  const dob = getTag(fblock, 'DOB') || getTag(fblock, 'DateOfBirth');
+  const last_name = getTag(fblock, 'LastNameOrNameOfOrg') || getTag(fblock, 'IndividualLastName') || getTag(fblock, 'LastName');
+  const first_name = getTag(fblock, 'FirstName') || getTag(fblock, 'IndividualFirstName');
   const middle_name = getTag(fblock, 'MiddleName') || getTag(fblock, 'IndividualMiddleName');
   const suffix_filer = getTag(fblock, 'Suffix') || getTag(fblock, 'IndividualSuffix');
   const type_of_filer = getTag(fblock, 'TypeOfFiler');
@@ -1869,6 +1869,7 @@ async function parseSummaryFileRich(file) {
       number:    col(['acct number','acct no','account number','account#','acct#','number']),
       type:      col(['account type','type','category']),
       ownership: col(['ownership','owner','joint']),
+      filerTin:  col(['filer tin','ssn/ein','ssn','ein','tin']),
       balance:   (function() {
         // Priority order
         const checks = [
@@ -1925,10 +1926,20 @@ async function parseSummaryFileRich(file) {
         if (!passwordMap[suffix]) passwordMap[suffix] = [];
         if (!passwordMap[suffix].includes(password)) passwordMap[suffix].push(password);
       }
-      rows.push({ name, number, suffix, type, ownership, balUSD, password, filerName: ci.filer >= 0 ? String(row[ci.filer] || '').trim() : '' });
+      const filerName = ci.filer >= 0 ? String(row[ci.filer] || '').trim() : '';
+      const filerTin = ci.filerTin >= 0 ? String(row[ci.filerTin] || '').replace(/[-\s]/g,'').trim() : '';
+      rows.push({ name, number, suffix, type, ownership, balUSD, password, filerName, filerTin });
     }
   }
-  return { rows, passwordMap };
+  // Build filerTinMap: filerId → TIN (first non-empty value per filer)
+  const filerTinMap = {};
+  for (const row of rows) {
+    if (row.filerName && row.filerTin) {
+      const filerDef = FBAR_FILERS.find(f => f.csvName && f.csvName.toLowerCase() === row.filerName.toLowerCase());
+      if (filerDef && !filerTinMap[filerDef.id]) filerTinMap[filerDef.id] = row.filerTin;
+    }
+  }
+  return { rows, passwordMap, filerTinMap };
 }
 
 function extractInstitutionFromText(text) {
@@ -2109,7 +2120,11 @@ async function runMatch() {
   for (const file of summaryObjs) {
     try {
       fb.matchLog.push('  Reading ' + file.name + '…'); render();
-      const { rows, passwordMap } = await parseSummaryFileRich(file);
+      const { rows, passwordMap, filerTinMap: csvFilerTins } = await parseSummaryFileRich(file);
+      if (!fb._filerTinMap) fb._filerTinMap = {};
+      for (const [fid, tin] of Object.entries(csvFilerTins || {})) {
+        if (!fb._filerTinMap[fid]) fb._filerTinMap[fid] = tin;
+      }
       // Merge passwordMap into fb.passwordMap
       for (const [sfx, pwds] of Object.entries(passwordMap)) {
         if (!fb.passwordMap[sfx]) fb.passwordMap[sfx] = [];
@@ -2330,6 +2345,47 @@ async function runMatch() {
       baseAccounts.push(na);
     }
   }
+
+  // ── Step 4: First-time filers — CSV filers with no prev FBAR ──
+  // Find the best (largest-slot) template index across all filers to use as fallback
+  let bestFallbackTmplIdx = -1;
+  let bestFallbackSlot = 0;
+  for (const [fid, idx] of Object.entries(pfTemplateIdx)) {
+    const slot = pfSlotSize[fid] || 0;
+    if (slot > bestFallbackSlot) { bestFallbackSlot = slot; bestFallbackTmplIdx = idx; }
+  }
+
+  for (const filerDef of FBAR_FILERS) {
+    if (!filerDef.active) continue;
+    if (pfTemplateIdx[filerDef.id] !== undefined) continue; // already has template from prev FBAR
+    // Check if any baseAccounts belong to this filer
+    const filerAccounts = baseAccounts.filter(a => a.filer_id === filerDef.id);
+    if (filerAccounts.length === 0) continue;
+    // Build fi from FBAR_FILERS data + CSV TIN
+    const csvName = filerDef.csvName || '';
+    const nameParts = csvName.split(' ');
+    const isTrust = csvName.toLowerCase().includes('trust');
+    const tin = (fb._filerTinMap && fb._filerTinMap[filerDef.id]) || '';
+    const fi = {
+      filing_name_base: filerDef.filingBase || filerDef.label,
+      filing_type: 'FBARX',
+      submit_url: 'https://bsaefiling1.fincen.treas.gov/NoRegFilerUpload',
+      tin, tin_type: isTrust ? 'EIN' : 'SSN', dob: '',
+      last_name: isTrust ? csvName : (nameParts.slice(1).join(' ') || ''),
+      first_name: isTrust ? '' : (nameParts[0] || ''),
+      middle_name: '', suffix_filer: '',
+      type_of_filer: isTrust ? '' : '1',
+      addr: '', city: '', state: '', zip: '', country: '',
+    };
+    pfInfo[filerDef.id] = fi;
+    // Use best available prev FBAR template (structurally identical, XFA will be overwritten)
+    pfTemplateIdx[filerDef.id] = bestFallbackTmplIdx;
+    fb.matchLog.push('  First-time filer: ' + filerDef.label + (tin ? ' (TIN: ' + tin + ')' : ' (TIN: unknown)') + (bestFallbackTmplIdx >= 0 ? ' — using fallback template' : ' — NO template available'));
+  }
+
+  // Update stored per-filer data to include first-time filers
+  fb._perFilerTemplateIdx = pfTemplateIdx;
+  fb._perFilerInfo = pfInfo;
 
   fb.accounts = baseAccounts;
   fb.matchRan = true;
@@ -2554,8 +2610,9 @@ function buildAccountBlockXML(acct) {
     xml += xmlE('NOofJointOwners', acct.n_joint_owners || '');
     const jc = acct.joint_country || 'IN';
     xml += `<ffbar:PrincipalJointOwner>`
-      + xmlE('TIN', acct.joint_tin||'') + xmlE('TINType', acct.joint_tin_type||'')
-      + xmlE('IndividualLastName', acct.joint_last||'') + xmlE('IndividualFirstName', acct.joint_first||'')
+      + xmlE('OwnerEntityIndicator', '') + xmlE('TIN', acct.joint_tin||'') + xmlE('TINTYPEU', acct.joint_tin_type||'')
+      + xmlE('LastName', acct.joint_last||'') + xmlE('FirstName', acct.joint_first||'')
+      + xmlE('MiddleName', '') + xmlE('Suffix', '')
       + buildXmlAddr('','','','',jc)
       + `</ffbar:PrincipalJointOwner>`;
   }
@@ -2563,25 +2620,50 @@ function buildAccountBlockXML(acct) {
 }
 
 function buildNewDatasetsXML(fi, accounts, year) {
-  const filerLabel = fi ? (fi.last_name || '') : '';
-  const filingName = fi && fi.filing_name_base ? fi.filing_name_base + ' FBAR ' + year : 'FBAR ' + year;
+  const name = fi ? (fi.filing_name_base || '') : '';
+  const filingName = name ? name + ' FBAR ' + year : 'FBAR ' + year;
+  const filingType = fi && fi.filing_type ? fi.filing_type : 'FBARX';
+  const submitUrl = fi && fi.submit_url ? fi.submit_url : 'https://bsaefiling1.fincen.treas.gov/NoRegFilerUpload';
   const acctBlocks = accounts.map(buildAccountBlockXML).join('');
-  return `<?xml version="1.0" encoding="UTF-8"?>`
-    + `<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">`
+  const filerInfoBlock = fi ? (
+    `<ffbar:FilerInformation>`
+    + xmlE('CalendarYear', year)
+    + xmlE('AmendToPriorReports', '')
+    + xmlE('TypeOfFiler', fi.type_of_filer || '')
+    + xmlE('FilerOther', '')
+    + xmlE('TIN', fi.tin || '')
+    + xmlE('TINTYPE', fi.tin_type || '')
+    + `<ffbar:ForeignId>${xmlE('ForeignIdType','')}${xmlE('OtherIDDesc','')}${xmlE('IdNumber','')}${xmlE('IssueCountry','')}</ffbar:ForeignId>`
+    + xmlE('DOB', fi.dob || '')
+    + xmlE('LastNameOrNameOfOrg', fi.last_name || '')
+    + xmlE('FirstName', fi.first_name || '')
+    + xmlE('MiddleName', fi.middle_name || '')
+    + xmlE('Suffix', fi.suffix_filer || '')
+    + buildXmlAddr(fi.addr||'', fi.city||'', fi.state||'', fi.zip||'', fi.country||'IN')
+    + xmlE('FIInterestIn25OrMore', 'B')
+    + xmlE('totalNumFIAccnts', '')
+    + xmlE('SigAuth25OrMore', 'B')
+    + xmlE('totalNumSigAuthAccnts', '')
+    + `<ucc:DocumentControlNumber ${UCC_NS_ATTR}/>`
+    + xmlE('FilerSignature', '')
+    + xmlE('PaidPreparer', '')
+    + xmlE('LateFilingReason', '  ')
+    + `</ffbar:FilerInformation>`
+  ) : '';
+  return `<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">`
     + `<xfa:data>`
     + `<ffbar:BSAForm ${FFBAR_NS_ATTRS}>`
-    + (fi ? (
-        `<est:FilingName>${filingName}</est:FilingName>`
-      + (fi.filing_type ? `<est:FilingType>${fi.filing_type}</est:FilingType>` : '')
-      + (fi.submit_url ? `<est:SubmitUrl>${fi.submit_url}</est:SubmitUrl>` : '')
-      + `<ffbar:FilerInformation>`
-      + xmlE('TIN', fi.tin) + xmlE('TINType', fi.tin_type)
-      + xmlE('IndividualLastName', fi.last_name) + xmlE('IndividualFirstName', fi.first_name)
-      + xmlE('MiddleName', fi.middle_name) + xmlE('Suffix', fi.suffix_filer)
-      + xmlE('DateOfBirth', fi.dob) + xmlE('TypeOfFiler', fi.type_of_filer)
-      + buildXmlAddr(fi.addr, fi.city, fi.state, fi.zip, fi.country)
-      + `</ffbar:FilerInformation>`
-    ) : '')
+    + `<ffbar:EFileSubmissionInformation>`
+    + `<est:FilingName>${filingName}</est:FilingName>`
+    + `<est:FilingType>${filingType}</est:FilingType>`
+    + `<est:VersionNumber>1.0</est:VersionNumber>`
+    + `<est:SpecificationVersion/>`
+    + `<est:SubmitUrl>${submitUrl}</est:SubmitUrl>`
+    + `</ffbar:EFileSubmissionInformation>`
+    + `<ffbar:SubmissionInformation>`
+    + `<ucc:SignatureTitle ${UCC_NS_ATTR}/><ucc:SignatureDate ${UCC_NS_ATTR}/>`
+    + `</ffbar:SubmissionInformation>`
+    + filerInfoBlock
     + acctBlocks
     + `</ffbar:BSAForm>`
     + `</xfa:data>`
@@ -2799,9 +2881,25 @@ async function generateRealFbarPdf() {
       const errors = [];
       for (const filerId of filerIds) {
         try {
-          const tmplIdx = perFilerTemplateIdx[filerId];
+          let tmplIdx = perFilerTemplateIdx[filerId];
+          // First-time filer: tmplIdx may be -1 (no prev FBAR) — find best available template
           if (tmplIdx === undefined || tmplIdx < 0 || !fbarFileObjects[tmplIdx]) {
-            errors.push(filerId + ': no template file found');
+            // Try to find any prev_fbar with a large slot as fallback
+            let bestSlot = 0;
+            for (let i = 0; i < fbarFileObjects.length; i++) {
+              if (fb.files[i]?.fileType !== 'prev_fbar') continue;
+              try {
+                const tmpBuf = await fbarFileObjects[i].arrayBuffer();
+                const tmpInfo = await findXFADatasetsStreamInfo(new Uint8Array(tmpBuf));
+                if (tmpInfo) {
+                  const slot = tmpInfo.slotEnd - tmpInfo.objStart;
+                  if (slot > bestSlot) { bestSlot = slot; tmplIdx = i; }
+                }
+              } catch(_) {}
+            }
+          }
+          if (tmplIdx === undefined || tmplIdx < 0 || !fbarFileObjects[tmplIdx]) {
+            errors.push(filerId + ': no template file found (first-time filer requires at least one prev FBAR from any filer)');
             continue;
           }
           const filerInfo = perFilerInfo[filerId] || fb.filerInfo;
