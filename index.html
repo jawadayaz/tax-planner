@@ -2886,7 +2886,7 @@ async function generateRealFbarPdf() {
       const blob = new Blob([outBytes], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = filename; a.click();
+      a.href = url; a.download = filename; document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     } else {
       // ── Multi-filer mode: generate one PDF per filer ──
@@ -2952,7 +2952,7 @@ async function generateRealFbarPdf() {
           const blob = new Blob([outBytes], { type: 'application/pdf' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
-          a.href = url; a.download = filename; a.click();
+          a.href = url; a.download = filename; document.body.appendChild(a); a.click(); document.body.removeChild(a);
           setTimeout(() => URL.revokeObjectURL(url), 5000);
           anyGenerated = true;
         } catch(e) {
