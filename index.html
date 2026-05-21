@@ -1820,7 +1820,7 @@ async function parseSummaryFile(file) {
       let balUSD = null;
       if (numStr) {
         const n = parseFloat(numStr);
-        if (!isNaN(n) && n > 0) {
+        if (!isNaN(n)) {
           // Heuristic: if > 500 * rate, assume INR
           balUSD = n > 500 * useRate ? Math.round(n / useRate) : Math.round(n);
         }
@@ -1863,7 +1863,8 @@ async function parseSummaryFileRich(file) {
     }
     const hdrs = data[hdrIdx].map(h => String(h).toLowerCase());
     const col = keys => { for (const k of keys) { const i = hdrs.findIndex(h => h.includes(k)); if (i>=0) return i; } return -1; };
-    // Balance column: look for 2025 inr/usd, usd, balance, value, amount, or nav
+    // Balance column: look for {year} inr/usd, usd, balance, value, amount, or nav
+    const csvYear = String(S.fbar.year || new Date().getFullYear());
     const ci = {
       name:      col(['institution','bank name','account name','name']),
       number:    col(['acct number','acct no','account number','account#','acct#','number']),
@@ -1873,7 +1874,7 @@ async function parseSummaryFileRich(file) {
       balance:   (function() {
         // Priority order
         const checks = [
-          h => /2025\s*inr[\s/]*usd/.test(h),
+          h => new RegExp(csvYear + '\\s*inr[\\s/]*usd').test(h),
           h => h.includes('usd'),
           h => h.includes('balance'),
           h => h.includes('value'),
@@ -1906,7 +1907,7 @@ async function parseSummaryFileRich(file) {
       let balUSD = null;
       if (numStr) {
         const n = parseFloat(numStr);
-        if (!isNaN(n) && n > 0) {
+        if (!isNaN(n)) {
           balUSD = n > 500 * useRate ? Math.round(n / useRate) : Math.round(n);
         }
       }
@@ -2178,7 +2179,7 @@ async function runMatch() {
             suffix: row.suffix || '',
             ownership,
             block_type: ownership === 'joint' ? 'FinAcctOwnedJointly' : 'FinAcctOwnedSeparately',
-            acct_type_code: row.type === 'brokerage' ? 'S' : row.type === 'mf' ? 'M' : 'B',
+            acct_type_code: row.type === 'brokerage' ? 'B' : row.type === 'mf' ? 'B' : 'A',
             other_desc: '', addr: '', city: '', state: '', zip: '', country: '',
             n_joint_owners: '', joint_tin: '', joint_tin_type: '', joint_last: '', joint_first: '', joint_country: '',
             prevMax: null, newMax: row.balUSD,
@@ -2387,7 +2388,7 @@ async function runMatch() {
       last_name: isTrust ? csvName : (nameParts.slice(1).join(' ') || ''),
       first_name: isTrust ? '' : (nameParts[0] || ''),
       middle_name: '', suffix_filer: '',
-      type_of_filer: isTrust ? '' : '1',
+      type_of_filer: isTrust ? 'E' : 'A',
       addr: '', city: '', state: '', zip: '', country: '',
     };
     pfInfo[filerDef.id] = fi;
@@ -2600,14 +2601,15 @@ function downloadFbarPDF() {
 // ─── FBAR REAL PDF GENERATION ─────────────────────────────────────────────────
 const UCC_NS_ATTR = 'xmlns:ucc="http://www.fincen.gov/bsa/ucommon-components/2011-06-01"';
 const FFBAR_NS_ATTRS = 'xmlns:ffbar="http://www.fincen.gov/bsa/ffbar/2011-06-01" xmlns:cc="http://www.fincen.gov/bsa/common-components/2009-01-01" xmlns:est="http://www.fincen.gov/bsa/efile-submission-types/2009-01-01" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"';
-function xmlE(tag, val, ns) { ns=ns||'ffbar'; const v=val!=null?String(val).trim():''; return v?`<${ns}:${tag}>${v}</${ns}:${tag}>`:`<${ns}:${tag}/>`; }
-function xmlEU(tag, val) { const v=val!=null?String(val).trim():''; return v?`<ucc:${tag} ${UCC_NS_ATTR}>${v}</ucc:${tag}>`:`<ucc:${tag} ${UCC_NS_ATTR}/>`; }
+function xmlEsc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function xmlE(tag, val, ns) { ns=ns||'ffbar'; const v=val!=null?xmlEsc(String(val).trim()):''; return v?`<${ns}:${tag}>${v}</${ns}:${tag}>`:`<${ns}:${tag}/>`; }
+function xmlEU(tag, val) { const v=val!=null?xmlEsc(String(val).trim()):''; return v?`<ucc:${tag} ${UCC_NS_ATTR}>${v}</ucc:${tag}>`:`<ucc:${tag} ${UCC_NS_ATTR}/>`; }
 function buildXmlAddr(a,ci,st,z,co) { return `<ffbar:Address>${xmlEU('Address',a)}${xmlEU('City',ci)}${xmlEU('State',st)}${xmlEU('ZIP',z)}${xmlEU('Country',co||'IN')}</ffbar:Address>`; }
 
 function buildAccountBlockXML(acct) {
   const ownership = acct.ownership || 'sole';
   const btype = acct.block_type || (ownership === 'joint' ? 'FinAcctOwnedJointly' : ownership === 'sigauth' ? 'FinAcctSigAuth' : 'FinAcctOwnedSeparately');
-  const TYPE_CODE_MAP = { bank:'B', brokerage:'S', mf:'M', other:'Z' };
+  const TYPE_CODE_MAP = { bank:'A', brokerage:'B', mf:'B', other:'Z' };
   const acctTypeCode = acct.acct_type_code || TYPE_CODE_MAP[acct.type] || 'B';
   const cleanNum = (acct.number||'').replace(/^\*+/g,'').replace(/^X+/gi,'').trim() || acct.suffix || '';
   const maxVal = Math.round(acct.newMax||0);
