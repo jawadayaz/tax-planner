@@ -138,7 +138,7 @@ const YEARS = [2022, 2023, 2024, 2025, 2026];
 const MEMBERS = [
   { id:'jawad_chhaya', label:'Jawad & Chhaya',        subtitle:'Joint US · Separate India', type:'couple',     icon:'👫', active_from:2012 },
   { id:'salar_trust',  label:'Salar Holdings Trust',  subtitle:'US Trust',                  type:'trust',      icon:'🏦', active_from:2012 },
-  { id:'mariam_trust', label:'Mariam Ayaz Trust',     subtitle:'US Trust · India Income',   type:'trust',      icon:'🏦', active_from:2027 },
+  { id:'mariam_trust', label:'Mariam Ayaz Trust',     subtitle:'US Trust · India Income',   type:'trust',      icon:'🏦', active_from:2022 },
   { id:'sakina',       label:'Sakina Ayaz',            subtitle:'US · India (from 2027)',    type:'individual', icon:'👩', active_from:2022 },
   { id:'aliza',        label:'Aliza Ayaz',             subtitle:'US · India NRI (from 2027)',type:'individual', icon:'👩', active_from:2022 },
 ];
@@ -166,8 +166,8 @@ const OBLIGATIONS = {
     { id:'k1_aliza_s',    label:'K-1 → Aliza (25%)',       jur:'US', cat:'k1s',     duo:1, dm:4, dd:15 },
   ],
   mariam_trust: [
-    { id:'us_1041_mariam',  label:'Form 1041 — US',         jur:'US',    cat:'returns', duo:1, dm:4, dd:15, em:9, ed:30, notes:'Nil — all distributed.' },
-    { id:'in_trust_mariam', label:'India Trust Return',     jur:'India', cat:'returns', duo:1, dm:7, dd:31, notes:'Nil — distributed on K-1.' },
+    { id:'us_1041_mariam',  label:'Form 1041 + 8938 — US',  jur:'US',    cat:'returns', duo:1, dm:4, dd:15, em:9, ed:30, cond:true, notes:'Required if (a) trust has income to report, or (b) Form 8938 filing threshold met. File even if distributions are nil.' },
+    { id:'in_trust_mariam', label:'India Trust Return',     jur:'India', cat:'returns', duo:1, dm:7, dd:31, active_from:2027, notes:'When India income begins (Mariam Trust distributions).' },
     { id:'k1_jawad_m',      label:'K-1 → Jawad (50%)',      jur:'US',    cat:'k1s',     duo:1, dm:4, dd:15 },
     { id:'k1_chhaya_m',     label:'K-1 → Chhaya (25%)',     jur:'US',    cat:'k1s',     duo:1, dm:4, dd:15 },
     { id:'k1_sakina_m',     label:'K-1 → Sakina (12.5%)',   jur:'US',    cat:'k1s',     duo:1, dm:4, dd:15 },
@@ -193,6 +193,7 @@ const SEED_STATUS = {
                     in_itr_jawad:'filed', in_itr_chhaya:'filed',
                     in_adv_q1:'filed', in_adv_q2:'filed', in_adv_q3:'filed', in_adv_q4:'filed' },
     salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed', k1_sakina_s:'na', k1_aliza_s:'na' },
+    mariam_trust: { us_1041_mariam:'not_started', in_trust_mariam:'na', k1_jawad_m:'na', k1_chhaya_m:'na', k1_sakina_m:'na', k1_aliza_m:'na' },
     sakina:       { us_1040_sakina:'filed', us_fbar_sakina:'na' },
     aliza:        { us_1040_aliza:'filed',  us_fbar_aliza:'na'  },
   },
@@ -201,6 +202,7 @@ const SEED_STATUS = {
                     in_itr_jawad:'filed', in_itr_chhaya:'filed',
                     in_adv_q1:'filed', in_adv_q2:'filed', in_adv_q3:'filed', in_adv_q4:'filed' },
     salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed', k1_sakina_s:'na', k1_aliza_s:'na' },
+    mariam_trust: { us_1041_mariam:'not_started', in_trust_mariam:'na', k1_jawad_m:'na', k1_chhaya_m:'na', k1_sakina_m:'na', k1_aliza_m:'na' },
     sakina:       { us_1040_sakina:'filed', us_fbar_sakina:'na' },
     aliza:        { us_1040_aliza:'filed',  us_fbar_aliza:'na'  },
   },
@@ -209,6 +211,7 @@ const SEED_STATUS = {
                     in_itr_jawad:'filed', in_itr_chhaya:'filed',
                     in_adv_q1:'filed', in_adv_q2:'filed', in_adv_q3:'filed', in_adv_q4:'filed' },
     salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed', k1_sakina_s:'na', k1_aliza_s:'na' },
+    mariam_trust: { us_1041_mariam:'not_started', in_trust_mariam:'na', k1_jawad_m:'na', k1_chhaya_m:'na', k1_sakina_m:'na', k1_aliza_m:'na' },
     sakina:       { us_1040_sakina:'filed', us_fbar_sakina:'na' },
     aliza:        { us_1040_aliza:'filed',  us_fbar_aliza:'na'  },
   },
@@ -218,6 +221,7 @@ const SEED_STATUS = {
                     in_itr_jawad:'not_started', in_itr_chhaya:'not_started',
                     in_adv_q1:'filed', in_adv_q2:'filed', in_adv_q3:'filed', in_adv_q4:'filed' },
     salar_trust:  { us_1041_salar:'filed', k1_chhaya_s:'filed', k1_sakina_s:'filed', k1_aliza_s:'filed' },
+    mariam_trust: { us_1041_mariam:'not_started', in_trust_mariam:'na', k1_jawad_m:'na', k1_chhaya_m:'na', k1_sakina_m:'na', k1_aliza_m:'na' },
     sakina:       { us_1040_sakina:'filed', us_fbar_sakina:'na' },
     aliza:        { us_1040_aliza:'filed',  us_fbar_aliza:'na'  },
   },
@@ -226,6 +230,7 @@ const SEED_STATUS = {
                     in_itr_jawad:'not_started', in_itr_chhaya:'not_started',
                     in_adv_q1:'not_started', in_adv_q2:'not_started', in_adv_q3:'not_started', in_adv_q4:'not_started' },
     salar_trust:  { us_1041_salar:'not_started', k1_chhaya_s:'not_started', k1_sakina_s:'not_started', k1_aliza_s:'not_started' },
+    mariam_trust: { us_1041_mariam:'not_started', in_trust_mariam:'na', k1_jawad_m:'na', k1_chhaya_m:'na', k1_sakina_m:'na', k1_aliza_m:'na' },
     sakina:       { us_1040_sakina:'not_started', us_fbar_sakina:'na' },
     aliza:        { us_1040_aliza:'not_started',  us_fbar_aliza:'na'  },
   },
@@ -336,7 +341,7 @@ function switchFbarFiler(filerId) {
 
 // ─── PERSIST ──────────────────────────────────────────────────────────────────
 // Bump STATUS_VER whenever SEED_STATUS changes significantly — discards stale localStorage overrides
-const STATUS_VER = 3;
+const STATUS_VER = 4;
 function saveStatus() {
   localStorage.setItem('tp_status', JSON.stringify({...S.status, _ver: STATUS_VER}));
 }
@@ -2619,7 +2624,7 @@ function parseJointOwner(holderStr, tinType) {
   const h = (holderStr||'').trim();
   if (!h) return { last:'', first:'', entity:false };
   const isEntity = (tinType||'').toUpperCase() === 'EIN';
-  if (isEntity) { return { last: h.split(' - ')[0].trim(), first:'', entity:true }; }
+  if (isEntity) { return { last: h, first:'', entity:true }; }
   const parts = h.split(/\s+/);
   return { last: parts.length >= 2 ? parts[parts.length-1] : h, first: parts[0], entity:false };
 }
