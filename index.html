@@ -2624,7 +2624,7 @@ function parseJointOwner(holderStr, tinType) {
   const h = (holderStr||'').trim();
   if (!h) return { last:'', first:'', entity:false };
   const isEntity = (tinType||'').toUpperCase() === 'EIN';
-  if (isEntity) { const dashIdx = h.indexOf(' - '); const orgName = dashIdx >= 0 ? h.slice(0, dashIdx).trim() : h; return { last: orgName, first:'', entity:true }; }
+  if (isEntity) { return { last: h, first:'', entity:true }; }
   const parts = h.split(/\s+/);
   return { last: parts.length >= 2 ? parts[parts.length-1] : h, first: parts[0], entity:false };
 }
