@@ -985,20 +985,26 @@ async function extractTextFromFile(file) {
       i = end+EM.length-1;
     }
   }
-  // The FBAR PDF has TWO streams containing ffbar:BSAForm:
-  // 1. A schema/description stream (no actual account data)
-  // 2. The data stream (with real institution names and balances)
-  // We must try parsing accounts from each matching stream and return
-  // the first one that yields actual account records.
+  // FBAR PDFs contain multiple streams with ffbar:BSAForm:
+  // 1. A schema/description stream (no actual account data, no FinAcctOwned elements)
+  // 2. One or more data streams with real institution names and balances
+  // Real FBARs use incremental updates — the LAST data stream is always the authoritative one.
+  // Scan all streams and return the last one that yields actual account records.
+  let bestXfaText = null;
   let fallbackXfaText = null;
   for (const chunk of chunks) {
     const text = await tryDecompress(chunk);
     if (!text || !text.includes('ffbar:BSAForm')) continue;
     const normalized = text.replace(/\n>/g, '>');
-    if (tryParseXFAAccounts(normalized).length > 0) return normalized; // data stream found
-    if (!fallbackXfaText) fallbackXfaText = normalized; // keep schema as fallback
+    if (tryParseXFAAccounts(normalized).length > 0 ||
+        normalized.includes('ffbar:FinAcctOwned') || normalized.includes('NoFinInterestFinAcctOwned')) {
+      bestXfaText = normalized; // keep updating — last data stream wins
+    } else if (!fallbackXfaText) {
+      fallbackXfaText = normalized; // schema stream fallback
+    }
   }
-  if (fallbackXfaText) return fallbackXfaText; // XFA found but no parseable accounts yet
+  if (bestXfaText) return bestXfaText;
+  if (fallbackXfaText) return fallbackXfaText;
 
   // Standard PDF via PDF.js
   initPdfWorker();
@@ -1821,14 +1827,12 @@ async function parseSummaryFile(file) {
       if (row.every(c => !String(c).trim())) continue; // skip empty rows
       const name = ci.name >= 0 ? String(row[ci.name] || '').trim() : '';
       if (!name || name.length < 2) continue;
-      const rawBalStr = ci.balance >= 0 ? String(row[ci.balance] || '') : '';
-      const numStr = rawBalStr.replace(/[,₹$\s]/g,'');
+      const numStr = ci.balance >= 0 ? String(row[ci.balance] || '').replace(/[,₹$\s]/g,'') : '';
       let balUSD = null;
       if (numStr) {
         const n = parseFloat(numStr);
         if (!isNaN(n)) {
-          const isInr = rawBalStr.includes('₹') || /rs\.?\s/i.test(rawBalStr);
-          balUSD = isInr ? Math.round(n / useRate) : Math.round(n);
+          balUSD = Math.round(n / useRate);
         }
       }
       const rawType = ci.type >= 0 ? String(row[ci.type] || '').toLowerCase() : '';
@@ -1913,14 +1917,12 @@ async function parseSummaryFileRich(file) {
       if (row.every(c => !String(c).trim())) continue;
       const name = ci.name >= 0 ? String(row[ci.name] || '').trim() : '';
       if (!name || name.length < 2) continue;
-      const rawBalStr2 = ci.balance >= 0 ? String(row[ci.balance] || '') : '';
-      const numStr = rawBalStr2.replace(/[,₹$\s]/g,'');
+      const numStr = ci.balance >= 0 ? String(row[ci.balance] || '').replace(/[,₹$\s]/g,'') : '';
       let balUSD = null;
       if (numStr) {
         const n = parseFloat(numStr);
         if (!isNaN(n)) {
-          const isInr = rawBalStr2.includes('₹') || /rs\.?\s/i.test(rawBalStr2);
-          balUSD = isInr ? Math.round(n / useRate) : Math.round(n);
+          balUSD = Math.round(n / useRate);
         }
       }
       const rawType = ci.type >= 0 ? String(row[ci.type] || '').toLowerCase() : '';
