@@ -2113,9 +2113,13 @@ async function runMatch() {
   }
 
   // Flatten per-filer accounts into baseAccounts (all tagged with filer_id)
+  // Only deduplicate within the same filer — shared physical accounts (same suffix)
+  // across filers (e.g. joint accounts held by Jawad and Chhaya) must appear
+  // separately per filer so each gets their own entry in the generated FBAR PDF.
   for (const fid of Object.keys(pfAccounts)) {
     for (const acct of pfAccounts[fid]) {
       const exists = baseAccounts.find(a => {
+        if (a.filer_id !== acct.filer_id) return false; // never merge across filers
         const aSuffix = a.suffix || (a.number || '').replace(/[^0-9]/g,'').slice(-4);
         const pSuffix = acct.suffix;
         if (pSuffix && pSuffix.length >= 4 && aSuffix && aSuffix.length >= 4) return pSuffix === aSuffix;
