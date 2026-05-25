@@ -1821,13 +1821,14 @@ async function parseSummaryFile(file) {
       if (row.every(c => !String(c).trim())) continue; // skip empty rows
       const name = ci.name >= 0 ? String(row[ci.name] || '').trim() : '';
       if (!name || name.length < 2) continue;
-      const numStr = ci.balance >= 0 ? String(row[ci.balance] || '').replace(/[,₹$\s]/g,'') : '';
+      const rawBalStr = ci.balance >= 0 ? String(row[ci.balance] || '') : '';
+      const numStr = rawBalStr.replace(/[,₹$\s]/g,'');
       let balUSD = null;
       if (numStr) {
         const n = parseFloat(numStr);
         if (!isNaN(n)) {
-          // Heuristic: if > 500 * rate, assume INR
-          balUSD = n > 500 * useRate ? Math.round(n / useRate) : Math.round(n);
+          const isInr = rawBalStr.includes('₹') || /rs\.?\s/i.test(rawBalStr);
+          balUSD = isInr ? Math.round(n / useRate) : Math.round(n);
         }
       }
       const rawType = ci.type >= 0 ? String(row[ci.type] || '').toLowerCase() : '';
@@ -1912,12 +1913,14 @@ async function parseSummaryFileRich(file) {
       if (row.every(c => !String(c).trim())) continue;
       const name = ci.name >= 0 ? String(row[ci.name] || '').trim() : '';
       if (!name || name.length < 2) continue;
-      const numStr = ci.balance >= 0 ? String(row[ci.balance] || '').replace(/[,₹$\s]/g,'') : '';
+      const rawBalStr2 = ci.balance >= 0 ? String(row[ci.balance] || '') : '';
+      const numStr = rawBalStr2.replace(/[,₹$\s]/g,'');
       let balUSD = null;
       if (numStr) {
         const n = parseFloat(numStr);
         if (!isNaN(n)) {
-          balUSD = n > 500 * useRate ? Math.round(n / useRate) : Math.round(n);
+          const isInr = rawBalStr2.includes('₹') || /rs\.?\s/i.test(rawBalStr2);
+          balUSD = isInr ? Math.round(n / useRate) : Math.round(n);
         }
       }
       const rawType = ci.type >= 0 ? String(row[ci.type] || '').toLowerCase() : '';
@@ -2290,28 +2293,31 @@ async function runMatch() {
       const acctSuffix = filenameSuffix || textAcctSuffix;
       const suffixSource = filenameSuffix ? 'filename' : textAcctSuffix ? 'header' : null;
 
-      const acctByNumber = acctSuffix
-        ? baseAccounts.find(a => {
+      const acctsByNumber = acctSuffix
+        ? baseAccounts.filter(a => {
             const aSuffix = a.suffix || (a.number || '').replace(/[^0-9]/g,'').slice(-4);
             return aSuffix === acctSuffix;
           })
-        : null;
+        : [];
 
-      if (acctByNumber) {
-        // Targeted single-account extraction — statement overrides everything
+      if (acctsByNumber.length > 0) {
+        // Targeted suffix match — fills missing balances; CSV value takes precedence
         const labeled = extractLabeledAmounts(text).map(l => l.value).sort((a,b) => b-a);
         const allAmts = extractCurrencyAmounts(text).concat(extractAmounts(text)).sort((a,b) => b-a);
         const peakBalance = labeled[0] || allAmts[0] || 0;
         if (peakBalance > 0) {
           const usdVal = Math.round(peakBalance / rate);
-          // Statement overrides regardless of current value
-          acctByNumber.newMax = usdVal;
-          acctByNumber.source = 'statement';
-          if (acctByNumber.status === 'needs_update') acctByNumber.status = 'matched';
-          fb.matchLog.push('    ✓ [' + suffixSource + ':****' + acctSuffix + '] ' + acctByNumber.name + ' — ' + fmtINR(peakBalance) + ' → ' + fmtUSD(usdVal));
+          for (const acct of acctsByNumber) {
+            if (acct.newMax == null) {
+              acct.newMax = usdVal;
+              acct.source = 'statement';
+              if (acct.status === 'needs_update') acct.status = 'matched';
+            }
+          }
+          fb.matchLog.push('    ✓ [' + suffixSource + ':****' + acctSuffix + '] ' + acctsByNumber[0].name + ' — ' + fmtINR(peakBalance) + ' → ' + fmtUSD(usdVal));
           fileMatched = true;
         } else {
-          fb.matchLog.push('    ? [' + suffixSource + ':****' + acctSuffix + '] ' + acctByNumber.name + ' — no balance found in ' + fb.year);
+          fb.matchLog.push('    ? [' + suffixSource + ':****' + acctSuffix + '] ' + acctsByNumber[0].name + ' — no balance found in ' + fb.year);
         }
       } else {
         // Suffix found but not in any account — track for new account
@@ -2348,9 +2354,8 @@ async function runMatch() {
           if (acctSuffix) fb.matchLog.push('    ? suffix ****' + acctSuffix + ' not matched to any known account — falling back to name search');
           for (const acct of baseAccounts) {
             const result = findAccountInText(acct.name, text);
-            if (result && result.peakBalance > 0) {
+            if (result && result.peakBalance > 0 && acct.newMax == null) {
               const usdVal = Math.round(result.peakBalance / rate);
-              // Statement overrides
               acct.newMax = usdVal;
               acct.source = 'statement';
               if (acct.status === 'needs_update') acct.status = 'matched';
