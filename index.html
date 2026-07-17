@@ -236,6 +236,29 @@ const SEED_STATUS = {
   },
 };
 
+// ─── FAMILY IDENTIFIERS ────────────────────────────────────────────────────────
+// Seed values — pre-populated on first load; user can override any field
+const SEED_FAMILY = {
+  jawad:        { entity_type:'individual', first_name:'Jawad',  last_name:'Ayaz', middle_name:'Ahmed', suffix_filer:'',
+                  ssn_ein:'465850134', tin_type:'SSN', dob:'05271964',
+                  addr:'84 3rd Main, Defence Colony, Indiranagar', city:'Bengaluru', state:'', zip:'560038', country:'IN' },
+  chhaya:       { entity_type:'individual', first_name:'Chhaya', last_name:'Ayaz', middle_name:'',       suffix_filer:'',
+                  ssn_ein:'466999530', tin_type:'SSN', dob:'01241967',
+                  addr:'84 3rd Main, Defence Colony, Indiranagar', city:'Bengaluru', state:'', zip:'560038', country:'IN' },
+  mariam_trust: { entity_type:'trust',      first_name:'Mariam Ayaz Trust', last_name:'', middle_name:'', suffix_filer:'',
+                  ssn_ein:'986123743', tin_type:'EIN', dob:'',
+                  addr:'5228 Tennington', city:'Dallas', state:'TX', zip:'75287', country:'US' },
+  salar_trust:  { entity_type:'trust',      first_name:'Salar Holdings Trust', last_name:'', middle_name:'', suffix_filer:'',
+                  ssn_ein:'766192533', tin_type:'EIN', dob:'',
+                  addr:'', city:'', state:'', zip:'', country:'US' },
+  sakina:       { entity_type:'individual', first_name:'Sakina', last_name:'Ayaz', middle_name:'',       suffix_filer:'',
+                  ssn_ein:'632361282', tin_type:'SSN', dob:'04141993',
+                  addr:'', city:'', state:'', zip:'', country:'IN' },
+  aliza:        { entity_type:'individual', first_name:'Aliza',  last_name:'Ayaz', middle_name:'',       suffix_filer:'',
+                  ssn_ein:'635723193', tin_type:'SSN', dob:'05131998',
+                  addr:'', city:'', state:'', zip:'', country:'IN' },
+};
+
 // ─── GIFT REGISTRY ────────────────────────────────────────────────────────────
 const GIFTS = [
   { year:2012, donors:'Jawad & Chhaya', split:true, donee:'(see 2012 Taxes/Gift Tax/ folder)',
@@ -274,6 +297,7 @@ const GLOBAL_WORKER_SECRET = '81bb75bce37a6d0f848df3afa7227cc9ad803b575f4887bc5b
 // ─── STATE ────────────────────────────────────────────────────────────────────
 // driveFiles: { jawad_chhaya: [{id,name},...], sakina: [...], ... } — keyed by member ID
 let S = { year:2025, view:'dashboard', member:'jawad_chhaya', status:{}, driveToken:null, driveFiles:{},
+  family: { filers:{} }, familyEditId: null, familyEditBuf: null,
   fbar: { filer:'jawad', year:2025, accounts:[], files:[], currentYearFiles:[], fxRate:null, pdfPasswords:[], matchRan:false, completed:false, balCurrency:'inr', filerInfo:null, flags:[], passwordMap:{} }
 };
 
@@ -371,6 +395,90 @@ function loadAll() {
   // Restore FBAR data for current filer
   const fbarRestored = loadFbarData(S.fbar.filer, S.fbar.year);
   S.fbar = fbarRestored;
+  // Load family identifiers (seeded on first load)
+  loadFamilyData();
+}
+
+// ─── FAMILY IDENTIFIERS PERSISTENCE ──────────────────────────────────────────
+function loadFamilyData() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('tp_family_v1') || '{}');
+    S.family.filers = {};
+    for (const id of Object.keys(SEED_FAMILY)) {
+      S.family.filers[id] = Object.assign({}, SEED_FAMILY[id], saved[id] || {});
+    }
+    for (const id of Object.keys(saved)) {
+      if (!S.family.filers[id]) S.family.filers[id] = saved[id];
+    }
+  } catch {
+    S.family.filers = {};
+    for (const id of Object.keys(SEED_FAMILY)) S.family.filers[id] = {...SEED_FAMILY[id]};
+  }
+}
+
+function getFilerInfo(filerId) {
+  const f = S.family.filers[filerId];
+  if (!f) return null;
+  return {
+    tin: f.ssn_ein || '', tin_type: f.tin_type || 'SSN', dob: f.dob || '',
+    last_name: f.last_name || '', first_name: f.first_name || '',
+    middle_name: f.middle_name || '', suffix_filer: f.suffix_filer || '',
+    type_of_filer: f.entity_type === 'trust' ? '2' : '1',
+    addr: f.addr || '', city: f.city || '', state: f.state || '',
+    zip: f.zip || '', country: f.country || '',
+  };
+}
+
+function saveFilerInfo(filerId, patch) {
+  if (!S.family.filers[filerId]) S.family.filers[filerId] = {...(SEED_FAMILY[filerId] || {})};
+  Object.assign(S.family.filers[filerId], patch);
+  try { localStorage.setItem('tp_family_v1', JSON.stringify(S.family.filers)); } catch {}
+}
+
+function importFamilyCSV(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const lines = e.target.result.split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) return;
+    const hdr = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g,'_'));
+    const ci = k => hdr.indexOf(k);
+    const cols = { id:ci('filer_id'), entity_type:ci('entity_type'), first:ci('first_name'),
+                   last:ci('last_name'), ssn:ci('ssn_ein'), tin_type:ci('tin_type'),
+                   dob:ci('dob_mmddyyyy'), addr:ci('addr'), city:ci('city'),
+                   state:ci('state'), zip:ci('zip'), country:ci('country') };
+    let count = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const cells = lines[i].match(/("(?:[^"]|"")*"|[^,]*)/g).map(c => c.replace(/^"|"$/g,'').replace(/""/g,'"').trim());
+      const id = cols.id >= 0 ? cells[cols.id] : null;
+      if (!id) continue;
+      const patch = {};
+      const g = (k, ci) => { if (ci >= 0 && cells[ci] !== undefined && cells[ci] !== '') patch[k] = cells[ci]; };
+      g('entity_type',cols.entity_type); g('first_name',cols.first); g('last_name',cols.last);
+      g('ssn_ein',cols.ssn); g('tin_type',cols.tin_type); g('dob',cols.dob);
+      g('addr',cols.addr); g('city',cols.city); g('state',cols.state); g('zip',cols.zip); g('country',cols.country);
+      if (patch.ssn_ein) patch.ssn_ein = patch.ssn_ein.replace(/[\s\-]/g,'');
+      saveFilerInfo(id, patch);
+      count++;
+    }
+    render();
+    alert('Updated ' + count + ' filer(s) from CSV.');
+  };
+  reader.readAsText(file);
+}
+
+function startFilerEdit(id) {
+  S.familyEditId = id;
+  S.familyEditBuf = {...(S.family.filers[id] || SEED_FAMILY[id] || {})};
+  render();
+}
+function cancelFilerEdit() { S.familyEditId = null; S.familyEditBuf = null; render(); }
+function updateFilerEditBuf(key, val) { if (S.familyEditBuf) S.familyEditBuf[key] = val; }
+function commitFilerEdit(id) {
+  if (!S.familyEditBuf) return;
+  if (S.familyEditBuf.ssn_ein) S.familyEditBuf.ssn_ein = S.familyEditBuf.ssn_ein.replace(/[\s\-]/g,'');
+  saveFilerInfo(id, S.familyEditBuf);
+  S.familyEditId = null; S.familyEditBuf = null;
+  render();
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -3016,10 +3124,78 @@ async function generateRealFbarPdf() {
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
+function renderFamilyIdentifiers() {
+  const FILER_ORDER = ['jawad','chhaya','mariam_trust','salar_trust','sakina','aliza'];
+  const maskTin = (tin, type) => {
+    if (!tin) return '—';
+    const d = tin.replace(/\D/g,'');
+    return type === 'EIN' ? (d.length >= 4 ? `**-***${d.slice(-4)}` : tin) : (d.length >= 4 ? `****${d.slice(-4)}` : tin);
+  };
+  const fmtDob = dob => (!dob || dob.length !== 8) ? '' : `${dob.slice(0,2)}/${dob.slice(2,4)}/${dob.slice(4)}`;
+  const esc = s => (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+
+  const summaryRow = id => {
+    const f = S.family.filers[id] || {};
+    if (S.familyEditId === id) return editForm(id, f);
+    const name = f.entity_type === 'trust' ? f.first_name : `${f.first_name||''} ${f.last_name||''}`.trim();
+    const parts = [
+      `<span style="font-weight:600">${esc(name)}</span>`,
+      f.ssn_ein ? `${f.tin_type||'SSN'} ${maskTin(f.ssn_ein, f.tin_type)}` : '',
+      f.dob ? `DOB ${fmtDob(f.dob)}` : '',
+      [f.city, f.country].filter(Boolean).join(', '),
+    ].filter(Boolean).join(' · ');
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #f3f4f6">
+      <span style="font-size:13px;color:#374151">${parts}</span>
+      <button class="btn btn-ghost" style="font-size:12px;padding:3px 10px" onclick="startFilerEdit('${id}')">Edit</button>
+    </div>`;
+  };
+
+  const editForm = (id, f) => {
+    const isInd = (f.entity_type||'individual') === 'individual';
+    const inp = (key, label, val, ph='') => `<div style="display:flex;flex-direction:column;gap:3px">
+      <label style="font-size:11px;color:#6b7280;font-weight:500">${label}</label>
+      <input class="fbar-input" value="${esc(val||'')}" placeholder="${ph}"
+        oninput="updateFilerEditBuf('${key}',this.value)" style="padding:5px 8px;font-size:13px">
+    </div>`;
+    return `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin:6px 0">
+      <div style="font-weight:600;font-size:13px;color:#111827;margin-bottom:10px">${esc(isInd ? `${f.first_name||''} ${f.last_name||''}`.trim() : (f.first_name||id))}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${isInd ? inp('first_name','First Name',f.first_name) : inp('first_name','Entity Name',f.first_name)}
+        ${isInd ? inp('last_name','Last Name',f.last_name) : '<div></div>'}
+        ${isInd ? inp('middle_name','Middle Name',f.middle_name) : ''}
+        ${inp('ssn_ein', isInd ? 'SSN (digits only)' : 'EIN (digits only)', f.ssn_ein)}
+        ${isInd ? inp('dob','DOB (MMDDYYYY)',f.dob,'05271964') : ''}
+        ${inp('addr','Street Address',f.addr)}
+        ${inp('city','City',f.city)}
+        ${inp('state','State (2-letter)',f.state,'TX')}
+        ${inp('zip','ZIP / Pin',f.zip)}
+        ${inp('country','Country',f.country,'US or IN')}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-primary" style="font-size:13px" onclick="commitFilerEdit('${id}')">Save</button>
+        <button class="btn btn-ghost" style="font-size:13px" onclick="cancelFilerEdit()">Cancel</button>
+      </div>
+    </div>`;
+  };
+
+  return `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-weight:600;font-size:14px;color:#374151">Family Identifiers</div>
+      <label class="btn btn-ghost" style="font-size:12px;padding:3px 10px;cursor:pointer">
+        Import CSV<input type="file" accept=".csv" style="display:none" onchange="importFamilyCSV(this.files[0])">
+      </label>
+    </div>
+    ${FILER_ORDER.map(summaryRow).join('')}
+    <div style="font-size:11px;color:#9ca3af;margin-top:8px">CSV columns: filer_id, first_name, last_name, entity_type, ssn_ein, tin_type, dob_mmddyyyy, addr, city, state, zip, country</div>
+  </div>`;
+}
+
 function renderSettings() {
   return `
   <div style="display:flex;flex-direction:column;gap:16px;max-width:640px">
     <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0">Settings</h1>
+
+    ${renderFamilyIdentifiers()}
 
     <div class="card">
       <div style="font-weight:600;font-size:14px;color:#374151;margin-bottom:12px">Family & Entities</div>
