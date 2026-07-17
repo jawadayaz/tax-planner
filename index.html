@@ -2843,7 +2843,8 @@ async function compressXmlStr(str) {
 }
 
 function buildEmbeddedFileObjBytes(objNum, objGen, compressed) {
-  const header = `${objNum} ${objGen} obj\r<</Filter[/FlateDecode]/Length ${compressed.length}/Type/EmbeddedFile>>stream\r\n`;
+  // Match FinCEN NFFBAR stream dict format exactly — no /Type, /Filter as direct name not array
+  const header = `${objNum} ${objGen} obj\r<</Filter/FlateDecode/Length ${compressed.length}>>stream\r\n`;
   const footer = `\rendstream\r\nendobj\r\n`;
   const hBytes = new TextEncoder().encode(header);
   const fBytes = new TextEncoder().encode(footer);
